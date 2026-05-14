@@ -1,0 +1,46 @@
+services:
+  work:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: work-sandbox:latest
+    container_name: work
+
+    # ── volumes ────────────────────────────────────────────────────────────────
+    volumes:
+      # Persistent workspace shared with the host.
+      - type: bind
+        source: ${WORKSPACE_DIR:-./workspace}
+        target: /workspace
+      # User-editable config (allowlists, etc.).
+      - type: bind
+        source: ${CONFIG_DIR:-./config}
+        target: /config
+
+    # ── ports ──────────────────────────────────────────────────────────────────
+    ports:
+      - "${PI_PORT:-4000}:4000"
+
+    # ── environment ────────────────────────────────────────────────────────────
+    environment:
+      # "allowlist" (default) or "open-get"
+      NETWORK_MODE: ${NETWORK_MODE:-allowlist}
+      # Passed straight through to the pi server
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+    # ── security ───────────────────────────────────────────────────────────────
+    # Drop capabilities that raw-socket / ptrace bypasses would require.
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+      - SYS_PTRACE
+    # Use Docker's default seccomp profile (tighten incrementally).
+    security_opt:
+      - seccomp:unconfined   # override to a custom profile path when ready
+
+    # Prevent privilege escalation inside the container.
+    # (The entrypoint itself temporarily needs root to start dnsmasq/squid,
+    # but the node server process runs as the non-root "work" user.)
+
+    restart: unless-stopped

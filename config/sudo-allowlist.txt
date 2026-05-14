@@ -1,0 +1,10 @@
+# Sudo command allowlist
+# One FULL command per line (including the "sudo" prefix).
+# Blank lines and lines beginning with # are ignored.
+# The agent will be blocked from running any sudo command not listed here,
+# even if the pi-sudo-gate extension would otherwise allow it.
+#
+# Example:
+#   sudo apt-get install -y curl
+#
+# This file is EMPTY by default — add entries only as needed.

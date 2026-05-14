@@ -1,0 +1,10 @@
+# Proxy domain allowlist — Mode A
+# One domain per line.  Blank lines and lines beginning with # are ignored.
+# Subdomains are matched automatically (squid dstdomain ACL).
+
+api.anthropic.com
+api.openai.com
+registry.npmjs.org
+github.com
+objects.githubusercontent.com
+raw.githubusercontent.com
