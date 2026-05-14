@@ -8,19 +8,22 @@ This document is for AI agents (and humans) doing further development on this re
 
 ```
 work/
-├── Dockerfile                   Main container image
-├── docker-compose.yml           Compose config
+├── Dockerfile                   Main container image (Node 24 LTS)
+├── docker-compose.yml           Compose config (work + searxng)
+├── package.json                 Pinned pi-extensions dependencies
+├── .pi/
+│   └── settings.json            pi sessionDir + packages + extensions
 ├── config/
 │   ├── proxy-allowlist.txt      User-editable proxy domain allowlist (Mode A)
 │   ├── sudo-allowlist.txt       User-editable sudo command allowlist
 │   ├── squid-allowlist.conf     Squid config rendered for Mode A
 │   ├── squid-open-get.conf      Squid config rendered for Mode B
 │   ├── dnsmasq-allowlist.conf   dnsmasq config for Mode A (default-deny)
-│   └── dnsmasq-open.conf        dnsmasq config for Mode B (permissive)
+│   ├── dnsmasq-open.conf        dnsmasq config for Mode B (permissive)
+│   └── searxng-settings.yml     SearXNG search engine configuration
 ├── scripts/
 │   ├── entrypoint.sh            Container start-up script
 │   ├── docker-run.sh            Convenience host launcher
-│   ├── sudo-wrapper.sh          Runtime allowlist-checked sudo gate
 │   └── squid-url-rewrite.py     URL rewrite helper (strips query strings, Mode B)
 ├── extensions/
 │   ├── sudo-gate.ts             pi extension: intercepts dangerous bash calls
@@ -34,25 +37,30 @@ work/
 
 ## Core invariants — never violate these
 
-1. **The `agent` user must never be able to run arbitrary root commands.** The only sudoers entry for `agent` points at `/usr/local/bin/sudo-wrapper`, which re-checks `/config/sudo-allowlist.txt` at runtime.
+1. **The `agent` user must never be able to run arbitrary root commands.** The sudoers entry grants wildcard `/usr/bin/*` access, but the `sudo-gate.ts` extension is the primary gatekeeper that validates against `/config/sudo-allowlist.txt` at runtime.
 2. **All outbound traffic from the container is routed through squid (port 3128).** Do not add firewall rules or iptables that bypass this.
 3. **`rm -rf` and `chmod/chown 777` are unconditionally blocked** by `extensions/sudo-gate.ts`, regardless of allowlists.
 4. **Mode A (allowlist)** is the secure default. Mode B (open-GET) trades security for convenience — never make Mode B the default.
 5. **The squid MITM CA private key is generated at build time** and never exported. Do not add steps that print or persist `/etc/squid/ssl-ca.key`.
+6. **Session data persists via the `pi-data` Docker volume** at `/home/agent/.pi`. Never hardcode sessionDir to a non-persistent path.
 
 ---
 
 ## Extending extensions
 
-All extensions live in `extensions/*.ts` and implement `ExtensionAPI` from `@mariozechner/pi-coding-agent`.
+All extensions live in `extensions/*.ts` and implement `ExtensionAPI` from `@earendil-works/pi-coding-agent`.
 
 ### Adding a new tool
 
 ```typescript
-pi.registerTool("my-tool", {
+pi.registerTool({
+  name: "my-tool",
   description: "...",
-  parameters: { type: "object", required: [...], properties: { ... } },
-  handler: async (input) => { ... },
+  parameters: Type.Object({ ... }),  // Use TypeBox
+  async execute(toolCallId, params, signal, onUpdate, ctx) {
+    // ...
+    return { content: [{ type: "text", text: "..." }], details: {} };
+  },
 });
 ```
 
@@ -79,6 +87,10 @@ pi.on("tool_call", async (event, ctx) => {
 });
 ```
 
+### Executing shell commands
+
+Use `pi.exec("bash", ["-c", command])` which returns `{ stdout, stderr, code, killed }`.
+
 ---
 
 ## Docker & proxy
@@ -87,6 +99,8 @@ pi.on("tool_call", async (event, ctx) => {
 
 Append to `config/proxy-allowlist.txt`. The entry must be a bare domain (e.g. `pypi.org`); squid's `dstdomain` ACL automatically matches subdomains.  The entrypoint also appends a `server=/<domain>/8.8.8.8` dnsmasq directive so DNS resolves correctly in Mode A.
 
+Alternatively, pass the allowlist inline via the `PROXY_ALLOWLIST` env var (newline-separated domains).
+
 ### Adding an allowlisted sudo command
 
 Append the full command (including `sudo`) to `config/sudo-allowlist.txt`, e.g.:
@@ -94,9 +108,34 @@ Append the full command (including `sudo`) to `config/sudo-allowlist.txt`, e.g.:
 sudo apt-get install -y curl
 ```
 
+Alternatively, pass the allowlist inline via the `SUDO_ALLOWLIST` env var (newline-separated commands).
+
 ### Switching network modes
 
 Set `NETWORK_MODE=open-get` via environment variable (docker-compose or docker run `-e`).
+
+### Enabling URL rewriting (Mode B)
+
+Set `URL_REWRITE_ENABLED=true` via environment variable. This appends `url_rewrite_program` directives to the Mode B squid config at runtime.
+
+---
+
+## pi extension configuration
+
+### package.json
+
+All off-the-shelf pi extensions are declared as `dependencies` with pinned versions.  The `pi` key declares local extension paths for the gallery.
+
+### .pi/settings.json
+
+This file is copied into the container and bootstrapped for the `agent` user at runtime.  It configures:
+- `sessionDir`: where session files are stored (persisted via Docker volume)
+- `extensions`: paths to local extension directories
+- `packages`: npm packages to load resources from (pinned versions)
+
+### SearXNG
+
+The SearXNG URL is configured via `SEARXNG_URL` env var.  The `pi-searxng` extension reads this from the environment at runtime.
 
 ---
 
@@ -113,10 +152,13 @@ The image is tagged with:
 
 ## Testing checklist before merging
 
-- [ ] `docker build .` completes without errors
+- [ ] `docker compose build` completes without errors
 - [ ] `NETWORK_MODE=allowlist docker compose up` — verify squid blocks non-allowlisted domains
 - [ ] `NETWORK_MODE=open-get docker compose up` — verify only GET/HEAD pass; POST returns 403
+- [ ] `URL_REWRITE_ENABLED=true docker compose up` — verify URL rewrite program runs in Mode B
 - [ ] sudo-gate extension blocks `rm -rf /` and `chmod 777 /etc` tool calls
 - [ ] sudo-gate extension blocks unlisted sudo commands
 - [ ] watch extension creates, fires, and auto-cancels correctly
 - [ ] todo extension persists across session restart
+- [ ] SearXNG container starts and responds on port 8080
+- [ ] `pi-data` volume persists session data across container rebuilds

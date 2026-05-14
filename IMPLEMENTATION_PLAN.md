@@ -1,6 +1,6 @@
 # work — Implementation Plan
 
-Work is a web-based agent sandbox for light development/research tasks. It consists of a hardened Docker sandbox and a set of `pi.dev` extensions.
+Work is a web-based agent sandbox for light development and research tasks. It consists of a hardened Docker sandbox and a set of `pi.dev` extensions.
 
 ---
 
@@ -9,29 +9,35 @@ Work is a web-based agent sandbox for light development/research tasks. It consi
 ### 1. Docker Sandbox Infrastructure
 
 #### 1.1 Dockerfile (`Dockerfile`)
-- [ ] Base image: `node:22-slim` (Debian slim)
-- [ ] Two users: `work` (runs the server, owns `/app`) and `agent` (runs pi processes, heavily restricted)
-- [ ] `sudo` installed; `agent` sudoers configured for allowlist-only, gated by a runtime approval token (set by the server after user confirms via `pi-sudo-gate` → `extension_ui_request` relay)
-- [ ] Capabilities dropped: `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`
-- [ ] Seccomp: Docker default profile (tighten incrementally)
-- [ ] `http_proxy` / `https_proxy` env vars set for `agent` user so all outbound traffic routes through squid
+- [x] Base image: `node:24-slim` (Debian slim, Node 24 LTS)
+- [x] Two users: `work` (runs the server, owns `/app`) and `agent` (runs pi processes, heavily restricted)
+- [x] `sudo` installed; `agent` sudoers configured for allowlist-only, gated by `sudo-gate.ts` extension
+- [x] Capabilities dropped: `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`
+- [x] Seccomp: Docker default profile (tighten incrementally)
+- [x] `http_proxy` / `https_proxy` env vars set for `agent` user so all outbound traffic routes through squid
+- [x] `jq` installed for env-var parsing
+- [x] `package.json` installed via `npm install` for off-the-shelf extensions
+- [x] Local extensions copied to `/home/work/.pi/extensions/` for auto-discovery
+- [x] `.pi/settings.json` template bootstrapped for `agent` user
 
 #### 1.2 Network Proxy (squid)
-- [ ] Two mutually exclusive modes via `NETWORK_MODE` env var:
+- [x] Two mutually exclusive modes via `NETWORK_MODE` env var:
   - **Mode A — Allowlist (default):** Domain allowlist from `/config/proxy-allowlist.txt`; HTTPS CONNECT tunneling only; dnsmasq default-deny as second layer
-  - **Mode B — Open-GET:** All domains, GET/HEAD only; squid strips all request headers except a fixed safe set and rewrites URLs to strip query strings; requires MITM TLS (self-signed CA injected at build time)
-- [ ] Security guarantees: block HTTP bulk exfiltration, block DNS exfiltration (Mode A), prevent raw socket bypass, enforce non-root + sudo UI approval
+  - **Mode B — Open-GET:** All domains, GET/HEAD only; squid strips all request headers except a fixed safe set; requires MITM TLS (self-signed CA injected at build time)
+- [x] Security guarantees: block HTTP bulk exfiltration, block DNS exfiltration (Mode A), prevent raw socket bypass, enforce non-root + sudo UI approval
+- [x] Optional URL rewriting for Mode B via `URL_REWRITE_ENABLED=true` env var (uses `squid-url-rewrite.py`)
 
 #### 1.3 DNS (dnsmasq)
-- [ ] Mode A: `address=/#/0.0.0.0` default-deny, explicit forwards per allowlisted domain
-- [ ] Mode B: Permissive upstream forwarding
-- [ ] `/etc/resolv.conf` → `127.0.0.1` inside container
+- [x] Mode A: `address=/#/0.0.0.0` default-deny, explicit forwards per allowlisted domain
+- [x] Mode B: Permissive upstream forwarding
+- [x] `/etc/resolv.conf` → `127.0.0.1` inside container
 
 #### 1.4 Docker Compose & Config
-- [ ] `docker-compose.yml`: workspace volume at `/workspace`, `/config` volume for user-editable files, port mapping, env var passthrough
-- [ ] `config/proxy-allowlist.txt`: user-editable; defaults: `api.anthropic.com`, `api.openai.com`, `registry.npmjs.org`, `github.com`, `objects.githubusercontent.com`
-- [ ] `config/sudo-allowlist.txt`: user-editable; **empty by default**
-- [ ] `scripts/docker-run.sh`: convenience launcher
+- [x] `docker-compose.yml`: workspace volume at `/workspace`, `/config` volume for user-editable files, `pi-data` named volume for session persistence, port mapping, env var passthrough
+- [x] `config/proxy-allowlist.txt`: user-editable; defaults: `api.anthropic.com`, `api.openai.com`, `registry.npmjs.org`, `github.com`, `objects.githubusercontent.com`, `raw.githubusercontent.com`
+- [x] `config/sudo-allowlist.txt`: user-editable; **empty by default**
+- [x] `config/searxng-settings.yml`: SearXNG search engine configuration
+- [x] `scripts/docker-run.sh`: convenience launcher with all new env vars
 
 ---
 
@@ -39,44 +45,79 @@ Work is a web-based agent sandbox for light development/research tasks. It consi
 
 Extensions live in `extensions/*.ts`. They contain logic that travels with the pi process, not with any particular UI.
 
-#### 2.1 Off-the-shelf extensions
-- [ ] Install `npm:npm:@jmfederico/pi-web`
-- [ ] Install `npm:pi-searxng` — decide: sidecar process or env-var config inside sandbox
-- [ ] Install `npm:pi-drawio`
-- [ ] Install `npm:pi-wiki`
-- [ ] Install `npm:pi-lens` — ensure linters + language servers are present
-- [ ] Install `npm:pi-subagents`
-- [ ] Install `npm:pi-schedule-prompt` — or implement custom watch extension if it doesn't work
+#### 2.1 Off-the-shelf extensions (pinned in `package.json`)
+- [x] `@jmfederico/pi-web@0.13.4` — web browsing
+- [x] `pi-searxng@1.0.4` — SearXNG search integration (sidecar container, configured via `SEARXNG_URL` env var)
+- [x] `pi-drawio@0.1.0` — Draw.io diagram editor
+- [x] `pi-wiki@2.0.0` — Wikipedia search
+- [x] `pi-lens@3.8.44` — code lens / language server integration
+- [x] `pi-subagents@0.24.2` — spawn sub-agent sessions
+- [x] `pi-schedule-prompt@0.3.0` — scheduled prompt execution
 
 #### 2.2 `pi-sudo-gate` (`extensions/sudo-gate.ts`)
-- [ ] Copy stock `permission-gate.ts` pattern into `extensions/sudo-gate.ts`
-- [ ] Add allowlist file check: read `/config/sudo-allowlist.txt` before prompting; deny immediately if command not listed
-- [ ] Add timed confirmation: `ctx.ui.confirm(..., { timeout: 30000 })` for auto-deny on timeout with visible countdown
-- [ ] Intercepts `bash` tool calls containing `sudo`; requires explicit user approval via `extension_ui_request` relay
-- [ ] Also blocks: `rm -rf`, `chmod/chown 777`
+- [x] Uses `permission-gate.ts` pattern
+- [x] Allowlist file check: reads `/config/sudo-allowlist.txt` before prompting; denies immediately if command not listed
+- [x] Timed confirmation: `ctx.ui.confirm(..., { timeout: 30000 })` for auto-deny on timeout
+- [x] Intercepts `bash` tool calls containing `sudo`; requires explicit user approval
+- [x] Also blocks: `rm -rf`, `chmod/chown 777`
 
 #### 2.3 `pi-tools` (`extensions/tools.ts`)
-- [ ] Register `/tools` command opening a `ctx.ui.custom()` component (pi's `SettingsList` TUI)
-- [ ] Lists all tools from `pi.getAllTools()` with toggle state from `pi.getActiveTools()`
-- [ ] On toggle, call `pi.setActiveTools(updatedNames)` — immediate effect, no restart
-- [ ] Persist selection via `pi.appendEntry("tool-config", { active: names })`; reconstruct in `session_start`
-- [ ] Display as a widget in the web UI (if possible)
+- [x] `/tools` command: `state`, `toggle <name>`, `set <name1,name2,...>`
+- [x] Lists all tools from `pi.getAllTools()` with toggle state from `pi.getActiveTools()`
+- [x] On toggle/set, calls `pi.setActiveTools(updatedNames)` — immediate effect, no restart
+- [x] Persist selection via `pi.appendEntry("tool-config", { active: names })`; reconstruct in `session_start`
+- [x] Emits `tools_state` message for web UI integration
 
-#### 2.4 `pi-watch` (custom, if `pi-schedule-prompt` is insufficient)
-- [ ] Register `watch` tool: actions `create` | `list` | `cancel`; params: `command`, `poll_every`, `stop_on`, `name`
-- [ ] On `create`: validate args, store definition, start `setInterval` polling loop, persist via `pi.appendEntry("watch-state", watches)`
-- [ ] Polling loop: run `pi.exec(...)`, evaluate `stop_on` against `{ output, exit_code, prev_output, changed }`, call `pi.sendUserMessage(result, { deliverAs: "followUp" })` on condition fire, then auto-cancel
-- [ ] On `session_start`: reconstruct watches from `appendEntry` records, restart timers
-- [ ] On `session_shutdown`: `clearInterval` all active timers
-- [ ] Constraints: max 5 active watches; poll interval 30s–24h; output truncated at 64 KB
+#### 2.4 `pi-watch` (`extensions/watch.ts`)
+- [x] Register `watch` tool: actions `create` | `list` | `cancel`; params: `command`, `poll_every`, `stop_on`, `name`
+- [x] On `create`: validates args, stores definition, starts `setInterval` polling loop, persists via `pi.appendEntry("watch-state", watches)`
+- [x] Polling loop: runs `pi.exec("bash", ["-c", command])`, evaluates `stop_on` against `{ output, exit_code, prev_output, changed }`, calls `pi.sendUserMessage(result, { deliverAs: "followUp" })` on condition fire, then auto-cancels
+- [x] On `session_start`/`session_tree`: reconstructs watches from `appendEntry` records, restarts timers
+- [x] On `session_shutdown`: `clearInterval` all active timers
+- [x] Constraints: max 5 active watches; poll interval 30s–24h; output truncated at 64 KB
 
-#### 2.5 `pi-todo` (custom)
-- [ ] Copy from pi.dev examples; simple todo tool registered as a pi extension
+#### 2.5 `pi-todo` (`extensions/todo.ts`)
+- [x] Simple todo tool registered as a pi extension
+- [x] Actions: `add`, `complete`, `delete`, `list`
+- [x] Persisted via `pi.appendEntry("todo-state", { items })`; restored on `session_start`/`session_tree`
 
 ---
 
-### 3. CI/CD & Documentation
+### 3. pi Extension Configuration
 
-- [ ] GitHub Actions pipeline: build and publish Docker image on push to `main`
-- [ ] Full documentation: architecture overview, setup instructions, configuration reference
-- [ ] `AGENTS.md`: guidelines for further development of the repo
+#### 3.1 `package.json`
+- [x] All off-the-shelf pi extensions declared as `dependencies` with pinned versions
+- [x] `pi` key declares local extension paths for gallery metadata
+
+#### 3.2 `.pi/settings.json`
+- [x] `sessionDir`: `/home/agent/.pi/sessions` (persisted via Docker volume)
+- [x] `extensions`: `["/home/work/.pi/extensions"]` (local extensions)
+- [x] `packages`: all off-the-shelf extensions with pinned versions
+
+#### 3.3 SearXNG integration
+- [x] SearXNG sidecar container defined in `docker-compose.yml`
+- [x] `SEARXNG_URL` env var passes the endpoint to the pi server
+- [x] `pi-searxng` extension reads `SearXNG_URL` from the environment at runtime
+
+---
+
+### 4. CI/CD & Documentation
+
+- [x] GitHub Actions pipeline: build and publish Docker image on push to `main`
+- [x] Full documentation: architecture overview, setup instructions, configuration reference
+- [x] `AGENTS.md`: guidelines for further development of the repo
+- [x] `README.md`: updated with all new env vars, SearXNG, session persistence, and pinned extension versions
+
+---
+
+## Feedback Addressed
+
+| # | Feedback | Status |
+|---|----------|--------|
+| 1 | Configure correctly per latest pi.dev docs | ✅ Done — imports use `@earendil-works/pi-coding-agent`, tools use `pi.exec("bash", ["-c", cmd])` pattern, `registerTool` uses new object schema |
+| 2 | Add SearXNG container + configure pi extension via env vars | ✅ Done — `searxng` service in docker-compose.yml, `SEARXNG_URL` env var, `pi-searxng` in packages |
+| 3 | Configure allowlists via env vars | ✅ Done — `PROXY_ALLOWLIST` and `SUDO_ALLOWLIST` env vars override config files at runtime |
+| 4 | Persist session data via Docker volume | ✅ Done — `pi-data` named volume at `/home/agent/.pi` in docker-compose.yml |
+| 5 | Optional URL filtering/rewrite for Mode B | ✅ Done — `URL_REWRITE_ENABLED=true` appends `url_rewrite_program` directives to squid config |
+| 6 | Use Node 24 LTS | ✅ Done — base image changed from `node:22-slim` to `node:24-slim` |
+| 7 | Use package.json with pinned versions | ✅ Done — all 7 off-the-shelf extensions declared with pinned versions in `package.json` and `.pi/settings.json` |

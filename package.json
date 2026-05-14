@@ -1,0 +1,24 @@
+{
+  "name": "work-sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hardened Docker sandbox for AI agent development and research tasks",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": [
+      "extensions/sudo-gate.ts",
+      "extensions/tools.ts",
+      "extensions/watch.ts",
+      "extensions/todo.ts"
+    ]
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "0.74.0",
+    "@jmfederico/pi-web": "1.202605.6",
+    "pi-searxng": "1.0.4",
+    "pi-drawio": "0.1.0",
+    "pi-wiki": "2.0.0",
+    "pi-lens": "3.8.44",
+    "pi-subagents": "0.24.2"
+  }
+}

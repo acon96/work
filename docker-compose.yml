@@ -1,10 +1,15 @@
 services:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # work — the hardened pi sandbox
+  # ─────────────────────────────────────────────────────────────────────────────
   work:
     build:
       context: .
       dockerfile: Dockerfile
     image: work-sandbox:latest
     container_name: work
+    depends_on:
+      - searxng
 
     # ── volumes ────────────────────────────────────────────────────────────────
     volumes:
@@ -16,6 +21,10 @@ services:
       - type: bind
         source: ${CONFIG_DIR:-./config}
         target: /config
+      # Persistent pi session data and settings (survives container rebuilds).
+      - type: volume
+        source: pi-data
+        target: /home/agent/.pi
 
     # ── ports ──────────────────────────────────────────────────────────────────
     ports:
@@ -25,22 +34,46 @@ services:
     environment:
       # "allowlist" (default) or "open-get"
       NETWORK_MODE: ${NETWORK_MODE:-allowlist}
-      # Passed straight through to the pi server
+      # SearXNG search endpoint (set to "searxng" for docker-compose, or a URL)
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      # Pass through API keys to the pi server
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Enable optional URL filtering/rewrite addon for Mode B
+      URL_REWRITE_ENABLED: ${URL_REWRITE_ENABLED:-false}
+      # Proxy allowlist (can override the file with inline env var)
+      PROXY_ALLOWLIST: ${PROXY_ALLOWLIST:-}
+      # Sudo allowlist (can override the file with inline env var)
+      SUDO_ALLOWLIST: ${SUDO_ALLOWLIST:-}
 
     # ── security ───────────────────────────────────────────────────────────────
-    # Drop capabilities that raw-socket / ptrace bypasses would require.
     cap_drop:
       - NET_RAW
       - NET_ADMIN
       - SYS_PTRACE
-    # Use Docker's default seccomp profile (tighten incrementally).
     security_opt:
-      - seccomp:unconfined   # override to a custom profile path when ready
-
-    # Prevent privilege escalation inside the container.
-    # (The entrypoint itself temporarily needs root to start dnsmasq/squid,
-    # but the node server process runs as the non-root "work" user.)
+      - seccomp:unconfined
 
     restart: unless-stopped
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # searxng — open-source metasearch engine
+  # ─────────────────────────────────────────────────────────────────────────────
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    volumes:
+      - searxng-data:/etc/searxng
+      - ./config/searxng-settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      - SEARXNG_BASE_URL=http://searxng:8080/
+    ports:
+      - "${SEARXNG_PORT:-8080}:8080"
+    restart: unless-stopped
+
+# ── named volumes ──────────────────────────────────────────────────────────────
+volumes:
+  pi-data:
+    driver: local
+  searxng-data:
+    driver: local

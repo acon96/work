@@ -5,7 +5,7 @@
  * in /config/sudo-allowlist.txt and then explicitly confirmed by the user.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 
 const SUDO_PATTERN = /\bsudo\b/i;

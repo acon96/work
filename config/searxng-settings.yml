@@ -1,0 +1,44 @@
+# SearXNG settings — minimal configuration for use inside the work sandbox.
+# This file is mounted read-only into the searxng container.
+
+use_default_settings: true
+
+general:
+  debug: false
+  instance_name: "Work SearXNG"
+
+search:
+  safe_search: 0
+  autocomplete: "google"
+  default_lang: "auto"
+  formats:
+    - html
+    - json
+
+server:
+  port: 8080
+  bind_address: "0.0.0.0"
+  secret_key: "change-me-in-production"
+  limiter: false
+  image_proxy: false
+
+engines:
+  - name: google
+    engine: google
+    shortcut: g
+    disabled: false
+
+  - name: bing
+    engine: bing
+    shortcut: b
+    disabled: false
+
+  - name: duckduckgo
+    engine: duckduckgo
+    shortcut: ddg
+    disabled: false
+
+  - name: wikipedia
+    engine: wikipedia
+    shortcut: wp
+    disabled: false

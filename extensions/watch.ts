@@ -21,7 +21,7 @@
  * After firing the watch auto-cancels.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const MAX_ACTIVE_WATCHES = 5;
@@ -105,9 +105,9 @@ async function runPoll(pi: ExtensionAPI, name: string): Promise<void> {
 	let exit_code = 0;
 
 	try {
-		const result = await pi.exec(definition.command);
-		output = truncate(result.output ?? "");
-		exit_code = result.exitCode ?? 0;
+		const result = await pi.exec("bash", ["-c", definition.command]);
+		output = truncate(result.stdout ?? "");
+		exit_code = result.code ?? 0;
 	} catch (err) {
 		output = String(err);
 		exit_code = 1;
