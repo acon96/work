@@ -1,6 +1,6 @@
 # work
 
-A hardened Docker sandbox for light AI agent development and research tasks, powered by [pi](https://pi.dev).
+A hardened Docker sandbox for "light" agentic development and research tasks, powered by [pi](https://pi.dev).
 
 ---
 
@@ -48,14 +48,14 @@ A hardened Docker sandbox for light AI agent development and research tasks, pow
 
 ### Security layers
 
-| Layer | Mechanism | Blocks |
-|---|---|---|
+| Layer   | Mechanism                | Blocks                                                     |
+| ------- | ------------------------ | ---------------------------------------------------------- |
 | Process | `pi-sudo-gate` extension | `sudo` (allowlist + approval), `rm -rf`, `chmod/chown 777` |
-| Network | squid proxy (Mode A) | All outbound except allowlisted HTTPS CONNECT |
-| Network | squid proxy (Mode B) | POST/PUT/PATCH, query strings, sensitive headers |
-| DNS | dnsmasq (Mode A) | All non-allowlisted hostnames → `0.0.0.0` |
-| OS | Docker `cap_drop` | `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE` |
-| OS | Docker seccomp | Default Docker profile |
+| Network | squid proxy (Mode A)     | All outbound except allowlisted HTTPS CONNECT              |
+| Network | squid proxy (Mode B)     | POST/PUT/PATCH, query strings, sensitive headers           |
+| DNS     | dnsmasq (Mode A)         | All non-allowlisted hostnames → `0.0.0.0`                  |
+| OS      | Docker `cap_drop`        | `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`                       |
+| OS      | Docker seccomp           | Default Docker profile                                     |
 
 ---
 
@@ -97,25 +97,21 @@ sudo apt-get install -y curl
 ### 3. Run
 
 ```bash
-ANTHROPIC_API_KEY=sk-... ./scripts/docker-run.sh
-```
-
-Or with Docker Compose:
-
-```bash
 ANTHROPIC_API_KEY=sk-... docker compose up
 ```
 
-Open the pi web UI at **http://localhost:4000** and SearXNG at **http://localhost:8080**.
+Open the pi web UI at **http://localhost:8504** and SearXNG at **http://localhost:8080**.
 
-#### Model Provider: llama-swap
+#### Optional: llama-swap
 
-**Option 1:** Launch Llama-Swap as part of the compose stack
+llama-swap is an optional service for dynamic LLM model swapping. It is **disabled by default** and can be enabled in two ways:
+
+**Option 1: Profile** (local llama-swap instance)
 ```bash
 docker compose --profile llama-swap up
 ```
 
-**Option 2:** Remote Llama-Swap instance
+**Option 2: External URL** (remote llama-swap service)
 ```bash
 LLAMA_SWAP_URL=https://ai.example.com docker compose up
 ```
@@ -127,20 +123,19 @@ When `LLAMA_SWAP_URL` is set, the work container will auto-trust the host in the
 
 ### Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `NETWORK_MODE` | `allowlist` | `allowlist` — strict outbound control; `open-get` — all domains but GET/HEAD only |
-| `WORKSPACE_DIR` | `./workspace` | Host path mounted as `/workspace` |
-| `CONFIG_DIR` | `./config` | Host path mounted as `/config` |
-| `PI_PORT` | `4000` | Host port for the pi web UI |
-| `SEARXNG_PORT` | `8080` | Host port for SearXNG |
-| `SEARXNG_URL` | `http://searxng:8080` | SearXNG endpoint (internal Docker URL); set to a custom URL for external SearXNG |
-| `URL_REWRITE_ENABLED` | `false` | Enable optional URL query-string stripping in Mode B (uses `squid-url-rewrite.py`) |
-| `PROXY_ALLOWLIST` | — | Newline-separated domains; overrides `config/proxy-allowlist.txt` at runtime |
-| `SUDO_ALLOWLIST` | — | Newline-separated sudo commands; overrides `config/sudo-allowlist.txt` at runtime |
-| `ANTHROPIC_API_KEY` | — | Anthropic API key |
-| `OPENAI_API_KEY` | — | OpenAI API key |
-| `LLAMA_SWAP_URL` | — | External llama-swap URL for dynamic model discovery (auto-adds host to proxy allowlist) |
+| Variable              | Default               | Description                                                                             |
+| --------------------- | --------------------- | --------------------------------------------------------------------------------------- |
+| `NETWORK_MODE`        | `allowlist`           | `allowlist` — strict outbound control; `open-get` — all domains but GET/HEAD only       |
+| `WORKSPACE_DIR`       | `./workspace`         | Host path mounted as `/workspace`                                                       |
+| `CONFIG_DIR`          | `./config`            | Host path mounted as `/config`                                                          |
+| `PI_WEB_PORT`         | `8504`                | Host port for the pi web UI                                                             |
+| `SEARXNG_URL`         | `http://searxng:8080` | SearXNG endpoint (internal Docker URL); set to a custom URL for external SearXNG        |
+| `URL_REWRITE_ENABLED` | `false`               | Enable optional URL query-string stripping in Mode B (uses `squid-url-rewrite.py`)      |
+| `PROXY_ALLOWLIST`     | —                     | Newline-separated domains; overrides `config/proxy-allowlist.txt` at runtime            |
+| `SUDO_ALLOWLIST`      | —                     | Newline-separated sudo commands; overrides `config/sudo-allowlist.txt` at runtime       |
+| `ANTHROPIC_API_KEY`   | —                     | Anthropic API key                                                                       |
+| `OPENAI_API_KEY`      | —                     | OpenAI API key                                                                          |
+| `LLAMA_SWAP_URL`      | —                     | External llama-swap URL for dynamic model discovery (auto-adds host to proxy allowlist) |
 
 ### config/proxy-allowlist.txt
 
@@ -164,28 +159,38 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 
 ### Local extensions (bundled)
 
-| Extension | File | Purpose |
-|---|---|---|
-| `pi-sudo-gate` | `extensions/sudo-gate.ts` | Intercepts `bash` tool calls; blocks dangerous commands; requires allowlist check + UI confirmation for `sudo` |
-| `pi-tools` | `extensions/tools.ts` | `/tools` command; runtime enable/disable of individual tools; persists selection |
-| `pi-watch` | `extensions/watch.ts` | `watch` tool; polls a shell command; fires a follow-up message when a condition is met |
-| `pi-todo` | `extensions/todo.ts` | `todo` tool; persistent todo list (add / complete / delete / list) |
+| Extension       | File                       | Purpose                                                                                                        |
+| --------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `pi-sudo-gate`  | `extensions/sudo-gate.ts`  | Intercepts `bash` tool calls; blocks dangerous commands; requires allowlist check + UI confirmation for `sudo` |
+| `pi-tools`      | `extensions/tools.ts`      | `/tools` command; runtime enable/disable of individual tools; persists selection                               |
+| `pi-watch`      | `extensions/watch.ts`      | `watch` tool; polls a shell command; fires a follow-up message when a condition is met                         |
+| `pi-todo`       | `extensions/todo.ts`       | `todo` tool; persistent todo list (add / complete / delete / list)                                             |
+| `pi-llama-swap` | `extensions/llama-swap.ts` | Llama-swap dynamic model discovery extension                                                                   |
 
 ### Off-the-shelf extensions (loaded via `package.json` → `pi install`)
 
-| Extension | Pinned Version | Purpose |
-|---|---|---|
-| `@jmfederico/pi-web` | `0.13.4` | Web browsing extension |
-| `pi-searxng` | `1.0.4` | SearXNG search integration |
-| `pi-drawio` | `0.1.0` | Draw.io diagram editor |
-| `pi-wiki` | `2.0.0` | Wikipedia search |
-| `pi-lens` | `3.8.44` | Code lens / language server integration |
-| `pi-subagents` | `0.24.2` | Spawn sub-agent sessions |
-| `pi-schedule-prompt` | `0.3.0` | Scheduled prompt execution |
+| Extension            | Pinned Version | Purpose                                 |
+| -------------------- | -------------- | --------------------------------------- |
+| `@jmfederico/pi-web` | `1.202605.6`   | Web browsing extension                  |
+| `pi-searxng`         | `1.0.4`        | SearXNG search integration              |
+| `pi-drawio`          | `0.1.0`        | Draw.io diagram editor                  |
+| `pi-wiki`            | `2.0.0`        | Wikipedia search                        |
+| `pi-lens`            | `3.8.44`       | Code lens / language server integration |
+| `pi-subagents`       | `0.24.2`       | Spawn sub-agent sessions                |
+| `pi-lama-swap`       | `0.1.0`        | Llama-swap model discovery integration  |
+
 
 ### Session persistence
 
-Session data is stored in `.pi/sessions` (configured via `.pi/settings.json` → `sessionDir`).  The `pi-data` named Docker volume persists this directory across container rebuilds.
+Session data is stored in `.pi/sessions` (configured via `.pi/settings.json` → `sessionDir`).  The directory is bind-mounted from the host into the container so it persists across container rebuilds.
+
+### Skills
+
+Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) and copied into the container at `~/.pi/agent/skills/` for global discovery.
+
+| Skill    | Location         | Purpose                                                             |
+| -------- | ---------------- | ------------------------------------------------------------------- |
+| `notify` | `skills/notify/` | Send push notifications via ntfy.sh for background-triggered events |
 
 ---
 

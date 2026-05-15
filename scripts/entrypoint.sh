@@ -121,10 +121,12 @@ done
 # ── pi-web: session daemon ───────────────────────────────────────────────────
 # The data dir may be a bind mount (host-created root-owned); fix permissions
 # and remove any stale socket from a previous crash before starting.
+# Note: on bind mounts (e.g. macOS Docker Desktop), rm may fail if the socket
+# is owned by root — ignore the error since the daemon handles stale sockets.
 log "Preparing pi-web data directory"
 mkdir -p "$AGENT_HOME/.pi/web"
 chown agent:agent "$AGENT_HOME/.pi/web"
-rm -f "$AGENT_HOME/.pi/web/sessiond.sock"
+rm -f "$AGENT_HOME/.pi/web/sessiond.sock" 2>/dev/null || true
 
 # Run as agent directly (not inside sh -c) so SESSIOND_PID is the daemon PID.
 log "Starting pi-web session daemon"
