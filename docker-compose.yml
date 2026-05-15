@@ -84,6 +84,22 @@ services:
       - "${SEARXNG_PORT:-8080}:8080"
     restart: unless-stopped
 
+  # ─────────────────────────────────────────────────────────────────────────────
+  # llama-swap — dynamic LLM model swapping (disabled by default)
+  # Start with: docker compose --profile llama-swap up
+  # ─────────────────────────────────────────────────────────────────────────────
+  llama-swap:
+    image: ghcr.io/mostlygeek/llama-swap:latest
+    container_name: llama-swap
+    profiles:
+      - llama-swap
+    volumes:
+      - ./config/llama-swap.yml:/app/config.yml:ro
+    command: ["--config", "/app/config.yml"]
+    ports:
+      - 8080
+    restart: unless-stopped
+
 # ── named volumes ──────────────────────────────────────────────────────────────
 volumes:
   searxng-data:

@@ -38,6 +38,11 @@ A hardened Docker sandbox for light AI agent development and research tasks, pow
 │  │  searxng container                                          │   │
 │  │  Open-source metasearch engine (port 8080)                  │   │
 │  └─────────────────────────────────────────────────────────────┘   │
+│                                                                    │
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │  llama-swap container (optional, --profile llama-swap)      │   │
+│  │  Dynamic LLM model swapping (port 8080)                     │   │
+│  └─────────────────────────────────────────────────────────────┘   │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -103,6 +108,19 @@ ANTHROPIC_API_KEY=sk-... docker compose up
 
 Open the pi web UI at **http://localhost:4000** and SearXNG at **http://localhost:8080**.
 
+#### Model Provider: llama-swap
+
+**Option 1:** Launch Llama-Swap as part of the compose stack
+```bash
+docker compose --profile llama-swap up
+```
+
+**Option 2:** Remote Llama-Swap instance
+```bash
+LLAMA_SWAP_URL=https://ai.example.com docker compose up
+```
+When `LLAMA_SWAP_URL` is set, the work container will auto-trust the host in the proxy allowlist. Configure your pi models to point to this URL for dynamic model discovery.
+
 ---
 
 ## Configuration reference
@@ -122,6 +140,7 @@ Open the pi web UI at **http://localhost:4000** and SearXNG at **http://localhos
 | `SUDO_ALLOWLIST` | — | Newline-separated sudo commands; overrides `config/sudo-allowlist.txt` at runtime |
 | `ANTHROPIC_API_KEY` | — | Anthropic API key |
 | `OPENAI_API_KEY` | — | OpenAI API key |
+| `LLAMA_SWAP_URL` | — | External llama-swap URL for dynamic model discovery (auto-adds host to proxy allowlist) |
 
 ### config/proxy-allowlist.txt
 
@@ -134,6 +153,10 @@ One full command per line including the `sudo` prefix.  Empty by default.  Comma
 ### config/searxng-settings.yml
 
 SearXNG configuration file.  Defines enabled search engines, safe-search level, and server settings.  Mounted read-only into the searxng container.
+
+### config/llama-swap.yml
+
+llama-swap configuration file.  Empty by default — llama-swap uses its own defaults.  Only needed when running llama-swap via `--profile llama-swap`.
 
 ---
 
