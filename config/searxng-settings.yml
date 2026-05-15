@@ -41,4 +41,4 @@ engines:
   - name: wikipedia
     engine: wikipedia
     shortcut: wp
-    disabled: false
+    disabled: true

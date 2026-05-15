@@ -13,11 +13,10 @@ A hardened Docker sandbox for light AI agent development and research tasks, pow
 │  ┌────────────────────────────────────────────────────────────┐   │
 │  │  work container (Node 24 LTS)                               │   │
 │  │                                                             │   │
-│  │  ┌──────────────┐     tool calls     ┌───────────────┐    │   │
-│  │  │  pi server   │ ──────────────────▶│  bash / fs /  │    │   │
-│  │  │  (user: work)│                    │  other tools  │    │   │
-│  │  │              │◀── extension hooks │  (user: agent)│    │   │
-│  │  └──────────────┘                    └───────────────┘    │   │
+ │  ┌────────────────────────────────────────────────────┐    │   │
+  │  │  pi server (user: agent)                           │    │   │
+  │  │  bash / fs / other tools ── extension hooks        │    │   │
+  │  └────────────────────────────────────────────────────┘    │   │
 │  │          │                                   │              │   │
 │  │          │  outbound HTTP/HTTPS              │              │   │
 │  │          ▼                                   ▼              │   │

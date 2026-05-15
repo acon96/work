@@ -9,7 +9,11 @@
       "extensions/sudo-gate.ts",
       "extensions/tools.ts",
       "extensions/watch.ts",
-      "extensions/todo.ts"
+      "extensions/todo.ts",
+      "extensions/llama-swap.ts"
+    ],
+    "skills": [
+      "skills/notify"
     ]
   },
   "dependencies": {

@@ -37,12 +37,12 @@ work/
 
 ## Core invariants — never violate these
 
-1. **The `agent` user must never be able to run arbitrary root commands.** The sudoers entry grants wildcard `/usr/bin/*` access, but the `sudo-gate.ts` extension is the primary gatekeeper that validates against `/config/sudo-allowlist.txt` at runtime.
+1. **There is only one runtime user: `agent` (uid 1001).** Never create additional users (`work`, `node`, etc.) for runtime use. Use `root` or `gosu root` only for privileged build steps.
 2. **All outbound traffic from the container is routed through squid (port 3128).** Do not add firewall rules or iptables that bypass this.
 3. **`rm -rf` and `chmod/chown 777` are unconditionally blocked** by `extensions/sudo-gate.ts`, regardless of allowlists.
 4. **Mode A (allowlist)** is the secure default. Mode B (open-GET) trades security for convenience — never make Mode B the default.
 5. **The squid MITM CA private key is generated at build time** and never exported. Do not add steps that print or persist `/etc/squid/ssl-ca.key`.
-6. **Session data persists via the `pi-data` Docker volume** at `/home/agent/.pi`. Never hardcode sessionDir to a non-persistent path.
+6. **Session data persists via the `pi-data` Docker volume** at `/home/agent/.pi/sessions`. The global settings live at `/home/agent/.pi/agent/settings.json`. Never hardcode sessionDir to a non-persistent path.
 
 ---
 
@@ -139,6 +139,44 @@ The SearXNG URL is configured via `SEARXNG_URL` env var.  The `pi-searxng` exten
 
 ---
 
+## Pi Web
+
+Pi Web is a web control plane for Pi Coding Agent with a split-process architecture:
+- **Session daemon** (`pi-web-sessiond`): owns active Pi session runtimes, listens on Unix socket at `~/.pi-web/sessiond.sock`
+- **Web server** (`pi-web-server`): serves the API and browser UI, defaults to `127.0.0.1:8504`
+
+### Environment variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `PI_WEB_PORT` / `PORT` | `8504` | Web server port |
+| `PI_WEB_HOST` | `127.0.0.1` | Web server bind host (use `0.0.0.0` to bind all interfaces) |
+| `PI_WEB_DATA_DIR` | `~/.pi-web` | Pi Web data directory (projects.json, daemon state) |
+| `PI_WEB_SESSIOND_SOCKET` | `$PI_WEB_DATA_DIR/sessiond.sock` | Unix socket path for session daemon |
+| `PI_WEB_SESSIOND_PORT` | — | Optional TCP port for daemon (if unset, uses Unix socket) |
+| `PI_WEB_SESSIOND_URL` | — | Daemon URL for web process TCP connection |
+| `PI_WEB_PROJECTS_FILE` | `$PI_WEB_DATA_DIR/projects.json` | Override projects storage file |
+
+### Persistent state
+
+Pi Web stores its state at `~/.pi-web/`:
+- `projects.json` — list of server-side projects
+- `sessiond.sock` — Unix socket for session daemon communication
+- Active session runtimes and WebSockets — in-memory in the session daemon
+
+This directory is bind-mounted to `.pi-web/` on the host for persistence.
+
+### Core model
+
+Pi Web organizes work into three levels:
+- **Project** — a folder on the server
+- **Workspace** — a git worktree, or the project folder for non-git projects
+- **Session** — a chat with Pi Coding Agent running inside a workspace
+
+Pi Web reuses existing Pi auth and model configuration from `~/.pi/agent/`.
+
+---
+
 ## CI/CD
 
 The GitHub Actions workflow at `.github/workflows/docker.yml` builds and pushes the image to `ghcr.io/<owner>/<repo>` on every push to `main` and on version tags.  Pull request builds run without pushing.
@@ -162,3 +200,47 @@ The image is tagged with:
 - [ ] todo extension persists across session restart
 - [ ] SearXNG container starts and responds on port 8080
 - [ ] `pi-data` volume persists session data across container rebuilds
+- [ ] Pi Web web server starts and responds on port 8504
+
+---
+
+## Gathering documentation
+
+You are better off gathering documentation for `pi.dev` rather than trying to introspect the code or use intellisense to determine the API surfaces. The documentation files live at:
+
+```
+https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/<path>
+```
+
+### Documentation index
+
+**Start here**
+- [Overview](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/index.md)
+- [Quickstart](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/quickstart.md)
+- [Using Pi](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/usage.md)
+- [Providers](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/providers.md)
+- [Settings](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/settings.md)
+- [Keybindings](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/keybindings.md)
+- [Sessions](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/sessions.md)
+- [Compaction](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/compaction.md)
+
+**Customization**
+- [Extensions](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/extensions.md)
+- [Skills](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/skills.md)
+- [Prompt Templates](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/prompt-templates.md)
+- [Themes](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/themes.md)
+- [Pi Packages](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/packages.md)
+- [Custom Models](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/models.md)
+- [Custom Providers](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/custom-provider.md)
+
+**Reference**
+- [Session Format](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/session-format.md)
+
+**Programmatic Usage**
+- [SDK](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/sdk.md)
+- [RPC Mode](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/rpc.md)
+- [JSON Event Stream Mode](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/json.md)
+- [TUI Components](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/tui.md)
+
+**Development**
+- [Development](https://raw.githubusercontent.com/earendil-works/pi/refs/heads/main/packages/coding-agent/docs/development.md)

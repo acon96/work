@@ -1,0 +1,20 @@
+{
+  "providers": {},
+  "llama-swap": {
+    "baseUrl": "http://llama-swap:8080",
+    "apiKey": "sk-none",
+    "fieldMapping": {
+      "contextWindow": "metadata.llamaswap.context_len",
+      "maxTokens": "metadata.llamaswap.max_tokens",
+      "reasoning": "metadata.llamaswap.reasoning",
+      "cost": {
+        "input": "metadata.llamaswap.cost_input",
+        "output": "metadata.llamaswap.cost_output",
+        "cacheRead": "metadata.llamaswap.cost_cache_read",
+        "cacheWrite": "metadata.llamaswap.cost_cache_write"
+      },
+      "thinkingFormat": "metadata.llamaswap.thinking_format"
+    }
+  }
+}
+

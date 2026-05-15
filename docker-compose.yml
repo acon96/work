@@ -15,20 +15,28 @@ services:
     volumes:
       # Persistent workspace shared with the host.
       - type: bind
-        source: ${WORKSPACE_DIR:-./workspace}
+        source: ${WORKSPACE_DIR:-./agent-workspace}
         target: /workspace
-      # User-editable config (allowlists, etc.).
+      # Pi global settings (all projects) — per pi.dev docs: ~/.pi/agent/settings.json
       - type: bind
-        source: ${CONFIG_DIR:-./config}
-        target: /config
-      # Persistent pi session data and settings (survives container rebuilds).
-      - type: volume
-        source: pi-data
-        target: /home/agent/.pi
+        source: .pi/agent/settings.json
+        target: /home/agent/.pi/agent/settings.json
+      # Pi models configuration (llama-swap field mappings, etc.)
+      - type: bind
+        source: .pi/agent/models.json
+        target: /home/agent/.pi/agent/models.json
+      # Persistent pi session data (survives container rebuilds)
+      - type: bind
+        source: .pi/sessions
+        target: /home/agent/.pi/sessions
+      # Pi Web state: projects list + session daemon socket
+      - type: bind
+        source: .pi/web
+        target: /home/agent/.pi/web
 
     # ── ports ──────────────────────────────────────────────────────────────────
     ports:
-      - "${PI_PORT:-4000}:4000"
+      - "${PI_WEB_PORT:-8504}:8504"
 
     # ── environment ────────────────────────────────────────────────────────────
     environment:
@@ -36,15 +44,20 @@ services:
       NETWORK_MODE: ${NETWORK_MODE:-allowlist}
       # SearXNG search endpoint (set to "searxng" for docker-compose, or a URL)
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
-      # Pass through API keys to the pi server
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       # Enable optional URL filtering/rewrite addon for Mode B
       URL_REWRITE_ENABLED: ${URL_REWRITE_ENABLED:-false}
       # Proxy allowlist (can override the file with inline env var)
       PROXY_ALLOWLIST: ${PROXY_ALLOWLIST:-}
       # Sudo allowlist (can override the file with inline env var)
       SUDO_ALLOWLIST: ${SUDO_ALLOWLIST:-}
+      # Llama-swap URL (for dynamic model discovery).
+      LLAMA_SWAP_URL: ${LLAMA_SWAP_URL:-}
+      # Pi Web web server port
+      PI_WEB_PORT: ${PI_WEB_PORT:-8504}
+      # Pi Web web server bind host (must be 0.0.0.0 inside the container so
+      # Docker's port mapping can reach it; restrict exposure via published ports)
+      PI_WEB_HOST: ${PI_WEB_HOST:-0.0.0.0}
+      PI_WEB_DATA_DIR: /home/agent/.pi/web
 
     # ── security ───────────────────────────────────────────────────────────────
     cap_drop:
@@ -73,7 +86,5 @@ services:
 
 # ── named volumes ──────────────────────────────────────────────────────────────
 volumes:
-  pi-data:
-    driver: local
   searxng-data:
     driver: local

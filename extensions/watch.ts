@@ -22,6 +22,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const MAX_ACTIVE_WATCHES = 5;
@@ -186,48 +187,30 @@ export default function watchExtension(pi: ExtensionAPI) {
 		}
 	});
 
-	pi.registerTool("watch", {
+	pi.registerTool({
+		name: "watch",
+		label: "Watch",
 		description:
 			"Monitor a shell command on a polling interval. " +
 			"Actions: create, list, cancel. " +
 			"On create provide: name (string), command (string), poll_every (seconds, 30–86400), " +
 			"stop_on (optional JS expression over {output, exit_code, prev_output, changed}).",
-		parameters: {
-			type: "object",
-			required: ["action"],
-			properties: {
-				action: {
-					type: "string",
-					enum: ["create", "list", "cancel"],
-					description: "Operation to perform.",
-				},
-				name: {
-					type: "string",
-					description: "Unique name for the watch (required for create/cancel).",
-				},
-				command: {
-					type: "string",
-					description: "Shell command to run on each poll (required for create).",
-				},
-				poll_every: {
-					type: "number",
-					description: "Poll interval in seconds, 30–86400 (required for create).",
-				},
-				stop_on: {
-					type: "string",
-					description:
-						"JS boolean expression evaluated with {output, exit_code, prev_output, changed}. " +
-						"Omit to fire on the very first poll.",
-				},
-			},
-		},
-		handler: async (input: Record<string, unknown>) => {
-			const action = String(input.action ?? "");
+		parameters: Type.Object({
+			action: Type.String({ description: "Operation to perform." }),
+			name: Type.Optional(Type.String({ description: "Unique name for the watch (required for create/cancel)." })),
+			command: Type.Optional(Type.String({ description: "Shell command to run on each poll (required for create)." })),
+			poll_every: Type.Optional(Type.Number({ description: "Poll interval in seconds, 30–86400 (required for create)." })),
+			stop_on: Type.Optional(Type.String({
+				description: "JS boolean expression evaluated with {output, exit_code, prev_output, changed}. Omit to fire on the very first poll.",
+			})),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			const action = params.action;
 
 			// ── list ────────────────────────────────────────────────────────────
 			if (action === "list") {
 				if (watches.size === 0) {
-					return { result: "No active watches." };
+					return { content: [{ type: "text", text: "No active watches." }], details: {} };
 				}
 				const rows = Array.from(watches.values()).map((r) => ({
 					name: r.definition.name,
@@ -236,34 +219,44 @@ export default function watchExtension(pi: ExtensionAPI) {
 					stop_on: r.definition.stop_on ?? "(first poll)",
 					created_at: new Date(r.definition.created_at).toISOString(),
 				}));
-				return { result: rows };
+				return { content: [{ type: "text", text: JSON.stringify(rows, null, 2) }], details: {} };
 			}
 
 			// ── cancel ──────────────────────────────────────────────────────────
 			if (action === "cancel") {
-				const name = String(input.name ?? "").trim();
-				if (!name) return { error: "name is required for cancel." };
+				const name = params.name?.trim();
+				if (!name) {
+					return { content: [{ type: "text", text: "Error: name is required for cancel." }], details: {} };
+				}
 				const removed = cancelWatch(name);
-				if (!removed) return { error: `No watch named '${name}'.` };
+				if (!removed) {
+					return { content: [{ type: "text", text: `Error: No watch named '${name}'.` }], details: {} };
+				}
 				persistWatches(pi);
-				return { result: `Watch '${name}' cancelled.` };
+				return { content: [{ type: "text", text: `Watch '${name}' cancelled.` }], details: {} };
 			}
 
 			// ── create ──────────────────────────────────────────────────────────
 			if (action === "create") {
-				const name = String(input.name ?? "").trim();
-				const command = String(input.command ?? "").trim();
-				const poll_every = Number(input.poll_every);
-				const stop_on = input.stop_on != null ? String(input.stop_on).trim() : null;
+				const name = params.name?.trim();
+				const command = params.command?.trim();
+				const poll_every = Number(params.poll_every);
+				const stop_on = params.stop_on != null ? params.stop_on.trim() : null;
 
-				if (!name) return { error: "name is required." };
-				if (!command) return { error: "command is required." };
-				if (!Number.isFinite(poll_every) || poll_every < MIN_POLL_SECONDS || poll_every > MAX_POLL_SECONDS) {
-					return { error: `poll_every must be between ${MIN_POLL_SECONDS} and ${MAX_POLL_SECONDS} seconds.` };
+				if (!name) {
+					return { content: [{ type: "text", text: "Error: name is required." }], details: {} };
 				}
-				if (watches.has(name)) return { error: `A watch named '${name}' already exists.` };
+				if (!command) {
+					return { content: [{ type: "text", text: "Error: command is required." }], details: {} };
+				}
+				if (!Number.isFinite(poll_every) || poll_every < MIN_POLL_SECONDS || poll_every > MAX_POLL_SECONDS) {
+					return { content: [{ type: "text", text: `Error: poll_every must be between ${MIN_POLL_SECONDS} and ${MAX_POLL_SECONDS} seconds.` }], details: {} };
+				}
+				if (watches.has(name)) {
+					return { content: [{ type: "text", text: `Error: A watch named '${name}' already exists.` }], details: {} };
+				}
 				if (watches.size >= MAX_ACTIVE_WATCHES) {
-					return { error: `Maximum of ${MAX_ACTIVE_WATCHES} active watches reached.` };
+					return { content: [{ type: "text", text: `Error: Maximum of ${MAX_ACTIVE_WATCHES} active watches reached.` }], details: {} };
 				}
 
 				const definition: WatchDefinition = {
@@ -280,11 +273,12 @@ export default function watchExtension(pi: ExtensionAPI) {
 				persistWatches(pi);
 
 				return {
-					result: `Watch '${name}' created. Polling every ${poll_every}s.`,
+					content: [{ type: "text", text: `Watch '${name}' created. Polling every ${poll_every}s.` }],
+					details: {},
 				};
 			}
 
-			return { error: `Unknown action '${action}'. Use: create, list, cancel.` };
+			return { content: [{ type: "text", text: `Unknown action '${action}'. Use: create, list, cancel.` }], details: {} };
 		},
 	});
 }

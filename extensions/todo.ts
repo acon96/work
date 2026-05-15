@@ -10,6 +10,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 
 // ── types ─────────────────────────────────────────────────────────────────────
 interface TodoItem {
@@ -51,16 +52,14 @@ function restore(ctx: ExtensionContext): void {
 }
 
 // ── rendering ─────────────────────────────────────────────────────────────────
-function formatList(): object {
-	if (todos.length === 0) return { result: "No todos." };
-	return {
-		result: todos.map((item) => ({
-			id: item.id,
-			status: item.done ? "done" : "pending",
-			text: item.text,
-			created_at: new Date(item.created_at).toISOString(),
-		})),
-	};
+function formatListResult(): Array<{ id: number; status: string; text: string; created_at: string }> {
+	if (todos.length === 0) return [];
+	return todos.map((item) => ({
+		id: item.id,
+		status: item.done ? "done" : "pending",
+		text: item.text,
+		created_at: new Date(item.created_at).toISOString(),
+	}));
 }
 
 // ── extension export ──────────────────────────────────────────────────────────
@@ -73,64 +72,68 @@ export default function todoExtension(pi: ExtensionAPI) {
 		restore(ctx);
 	});
 
-	pi.registerTool("todo", {
+	pi.registerTool({
+		name: "todo",
+		label: "Todo",
 		description:
 			"Manage a persistent todo list. " +
 			"Actions: add (text required), complete (id required), delete (id required), list.",
-		parameters: {
-			type: "object",
-			required: ["action"],
-			properties: {
-				action: {
-					type: "string",
-					enum: ["add", "complete", "delete", "list"],
-					description: "Operation to perform.",
-				},
-				text: {
-					type: "string",
-					description: "Todo text (required for add).",
-				},
-				id: {
-					type: "number",
-					description: "Todo id (required for complete / delete).",
-				},
-			},
-		},
-		handler: async (input: Record<string, unknown>) => {
-			const action = String(input.action ?? "");
+		parameters: Type.Object({
+			action: Type.String({ description: "Operation to perform." }),
+			text: Type.Optional(Type.String({ description: "Todo text (required for add)." })),
+			id: Type.Optional(Type.Number({ description: "Todo id (required for complete / delete)." })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+			const action = params.action;
 
 			if (action === "list") {
-				return formatList();
+				const items = formatListResult();
+				if (items.length === 0) {
+					return { content: [{ type: "text", text: "No todos." }], details: {} };
+				}
+				return { content: [{ type: "text", text: JSON.stringify(items, null, 2) }], details: {} };
 			}
 
 			if (action === "add") {
-				const text = String(input.text ?? "").trim();
-				if (!text) return { error: "text is required." };
+				const text = params.text?.trim();
+				if (!text) {
+					return { content: [{ type: "text", text: "Error: text is required." }], details: {} };
+				}
 				const item: TodoItem = { id: nextId++, text, done: false, created_at: Date.now() };
 				todos.push(item);
 				persist(pi);
-				return { result: `Added todo #${item.id}: ${item.text}` };
+				return { content: [{ type: "text", text: `Added todo #${item.id}: ${item.text}` }], details: {} };
 			}
 
 			if (action === "complete") {
-				const id = Number(input.id);
+				const id = params.id;
+				if (id === undefined) {
+					return { content: [{ type: "text", text: "Error: id is required." }], details: {} };
+				}
 				const item = todos.find((t) => t.id === id);
-				if (!item) return { error: `No todo with id ${id}.` };
+				if (!item) {
+					return { content: [{ type: "text", text: `Error: No todo with id ${id}.` }], details: {} };
+				}
 				item.done = true;
 				persist(pi);
-				return { result: `Marked todo #${id} as done.` };
+				return { content: [{ type: "text", text: `Marked todo #${id} as done.` }], details: {} };
 			}
 
 			if (action === "delete") {
-				const id = Number(input.id);
+				const id = params.id;
+				if (id === undefined) {
+					return { content: [{ type: "text", text: "Error: id is required." }], details: {} };
+				}
 				const before = todos.length;
 				todos = todos.filter((t) => t.id !== id);
-				if (todos.length === before) return { error: `No todo with id ${id}.` };
+				if (todos.length === before) {
+					return { content: [{ type: "text", text: `Error: No todo with id ${id}.` }], details: {} };
+				}
 				persist(pi);
-				return { result: `Deleted todo #${id}.` };
+				return { content: [{ type: "text", text: `Deleted todo #${id}.` }], details: {} };
 			}
 
-			return { error: `Unknown action '${action}'. Use: add, complete, delete, list.` };
+			return { content: [{ type: "text", text: `Unknown action '${action}'. Use: add, complete, delete, list.` }], details: {} };
 		},
 	});
 }

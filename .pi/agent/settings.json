@@ -1,0 +1,25 @@
+{
+  "defaultProvider": "llama-swap",
+  "compaction": {
+    "enabled": true,
+    "reserveTokens": 16384,
+    "keepRecentTokens": 20000
+  },
+  "retry": {
+    "enabled": true,
+    "maxRetries": 3
+  },
+  "sessionDir": "/home/agent/.pi/sessions",
+  "extensions": [
+    "/home/agent/.pi/extensions"
+  ],
+  "packages": [
+    "/app/node_modules/@jmfederico/pi-web",
+    "/app/node_modules/pi-searxng",
+    "/app/node_modules/pi-drawio",
+    "/app/node_modules/pi-wiki",
+    "/app/node_modules/pi-lens",
+    "/app/node_modules/pi-subagents"
+  ],
+  "defaultModel": "qwen3.6-35b-a3b:coding"
+}

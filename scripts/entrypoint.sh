@@ -3,10 +3,9 @@
 #   1. Bootstrap /config files (allowlists, with env-var overrides)
 #   2. Configure dnsmasq for the selected NETWORK_MODE
 #   3. Configure squid for the selected NETWORK_MODE (with optional URL rewrite)
-#   4. Bootstrap .pi/settings.json (SearXNG, sessionDir)
-#   5. Copy local extensions to agent's .pi/extensions
-#   6. Start dnsmasq and squid
-#   7. Exec the pi server as the "work" user
+#   4. Copy local extensions to agent's .pi/extensions
+#   5. Start dnsmasq and squid
+#   6. Exec the pi server as the "work" user
 set -euo pipefail
 
 NETWORK_MODE="${NETWORK_MODE:-allowlist}"
@@ -17,23 +16,33 @@ AGENT_HOME="/home/agent"
 log() { echo "[entrypoint] $*"; }
 
 # ── env-var allowlist overrides ──────────────────────────────────────────────
-# PROXY_ALLOWLIST: newline-separated domains, overrides /config/proxy-allowlist.txt
+# PROXY_ALLOWLIST: comma-separated domains, appends to /config/proxy-allowlist.txt
 if [[ -n "${PROXY_ALLOWLIST:-}" ]]; then
     log "Proxy allowlist provided via env var"
-    echo "$PROXY_ALLOWLIST" > "$CONFIG_DIR/proxy-allowlist.txt"
+    IFS=',' read -ra DOMAINS <<< "$PROXY_ALLOWLIST"
+    for domain in "${DOMAINS[@]}"; do
+        echo "$domain" >> "$CONFIG_DIR/proxy-allowlist.txt"
+    done
 fi
 
-# SUDO_ALLOWLIST: newline-separated sudo commands, overrides /config/sudo-allowlist.txt
+# SUDO_ALLOWLIST: comma-separated sudo commands, appends to /config/sudo-allowlist.txt
 if [[ -n "${SUDO_ALLOWLIST:-}" ]]; then
     log "Sudo allowlist provided via env var"
-    echo "$SUDO_ALLOWLIST" > "$CONFIG_DIR/sudo-allowlist.txt"
+    IFS=',' read -ra COMMANDS <<< "$SUDO_ALLOWLIST"
+    for cmd in "${COMMANDS[@]}"; do
+        echo "$cmd" >> "$CONFIG_DIR/sudo-allowlist.txt"
+    done
 fi
 
-# ── bootstrap /config if volume was mounted empty ───────────────────────────
-[[ -f "$CONFIG_DIR/proxy-allowlist.txt" ]] \
-    || cp "$WORK_CONFIG/proxy-allowlist.txt.default" "$CONFIG_DIR/proxy-allowlist.txt"
-[[ -f "$CONFIG_DIR/sudo-allowlist.txt" ]] \
-    || cp "$WORK_CONFIG/sudo-allowlist.txt.default"  "$CONFIG_DIR/sudo-allowlist.txt"
+# ── auto-trust LLAMA_SWAP_URL in proxy allowlist ─────────────────────────────
+if [[ -n "${LLAMA_SWAP_URL:-}" ]]; then
+    # Extract hostname (strip scheme, port, trailing slash)
+    LS_HOST=$(echo "$LLAMA_SWAP_URL" | sed 's|.*://||' | sed 's|:.*||' | sed 's|/.*||')
+    if [[ -n "$LS_HOST" ]] && ! grep -qx "$LS_HOST" "$CONFIG_DIR/proxy-allowlist.txt" 2>/dev/null; then
+        log "Auto-trusting llama-swap host: $LS_HOST"
+        echo "$LS_HOST" >> "$CONFIG_DIR/proxy-allowlist.txt"
+    fi
+fi
 
 # ── resolv.conf ──────────────────────────────────────────────────────────────
 # Save original upstream resolvers before we replace resolv.conf with
@@ -46,12 +55,22 @@ if [[ "$NETWORK_MODE" == "allowlist" ]]; then
     log "Network mode: allowlist"
     DNSMASQ_CONF="$WORK_CONFIG/dnsmasq-allowlist.conf"
 
-    # Append per-domain server= directives from the allowlist.
+    # Resolve the upstream DNS server from the saved resolv.conf so we never
+    # hardcode a public resolver (e.g. 8.8.8.8).  server=/<domain>/<ip> must
+    # carry an explicit IP because address=/#/0.0.0.0 takes precedence over
+    # bare server=/<domain>/ directives in dnsmasq's resolution order.
+    UPSTREAM_DNS=$(awk '/^nameserver/{print $2; exit}' /etc/resolv.conf.upstream)
+    if [[ -z "$UPSTREAM_DNS" ]]; then
+        log "Warning: no upstream nameserver found in resolv.conf.upstream; DNS allowlist may not resolve"
+    fi
+
+    # Append per-domain server= directives from the allowlist so that
+    # allowlisted domains bypass the address=/#/0.0.0.0 default-deny.
     RUNTIME_DNSMASQ="/run/dnsmasq-allowlist.conf"
     cp "$DNSMASQ_CONF" "$RUNTIME_DNSMASQ"
     while IFS= read -r domain; do
         [[ -z "$domain" || "$domain" =~ ^# ]] && continue
-        echo "server=/${domain}/8.8.8.8" >> "$RUNTIME_DNSMASQ"
+        echo "server=/${domain}/${UPSTREAM_DNS}" >> "$RUNTIME_DNSMASQ"
     done < "$CONFIG_DIR/proxy-allowlist.txt"
     DNSMASQ_CONF="$RUNTIME_DNSMASQ"
 else
@@ -84,6 +103,8 @@ log "Starting dnsmasq (conf: $DNSMASQ_CONF)"
 dnsmasq --conf-file="$DNSMASQ_CONF" --pid-file=/run/dnsmasq.pid
 
 # ── start squid ──────────────────────────────────────────────────────────────
+# Clean up stale PID file from a previous crash.
+rm -f /run/squid.pid
 log "Starting squid (conf: $SQUID_CONF)"
 squid -f "$SQUID_CONF" -N &
 SQUID_PID=$!
@@ -97,40 +118,28 @@ for i in $(seq 1 20); do
     sleep 0.5
 done
 
-# ── bootstrap .pi/settings.json for the agent user ───────────────────────────
-# Merge env-var SearXNG URL into settings if provided.
-SETTINGS_DIR="$AGENT_HOME/.pi"
-SETTINGS_FILE="$SETTINGS_DIR/settings.json"
-mkdir -p "$SETTINGS_DIR"
+# ── pi-web: session daemon ───────────────────────────────────────────────────
+# The data dir may be a bind mount (host-created root-owned); fix permissions
+# and remove any stale socket from a previous crash before starting.
+log "Preparing pi-web data directory"
+mkdir -p "$AGENT_HOME/.pi/web"
+chown agent:agent "$AGENT_HOME/.pi/web"
+rm -f "$AGENT_HOME/.pi/web/sessiond.sock"
 
-if [[ -f "$SETTINGS_FILE" ]]; then
-    # Settings already exist (from volume mount) — skip.
-    log ".pi/settings.json already exists, skipping bootstrap"
-else
-    log "Bootstrapping .pi/settings.json"
-    # Start from the template
-    cp /home/work/.pi/settings.json "$SETTINGS_FILE" 2>/dev/null || true
+# Run as agent directly (not inside sh -c) so SESSIOND_PID is the daemon PID.
+log "Starting pi-web session daemon"
+gosu agent env PI_WEB_DATA_DIR="$AGENT_HOME/.pi/web" pi-web-sessiond &
+SESSIOND_PID=$!
 
-    # Inject SearXNG URL if provided.
-    if [[ -n "${SEARXNG_URL:-}" ]]; then
-        log "Configuring SearXNG endpoint: $SEARXNG_URL"
-        # Create a project-level settings override that sets the SearXNG API key
-        # (pi-searxng reads SearXNG_URL from the environment at runtime)
-        export SearXNG_URL="$SEARXNG_URL"
+# Wait until the session daemon socket is ready.
+for i in $(seq 1 20); do
+    if [ -S "$AGENT_HOME/.pi/web/sessiond.sock" ]; then
+        log "Pi-web session daemon is ready."
+        break
     fi
-
-    chown -R agent:agent "$SETTINGS_DIR"
-fi
-
-# ── copy local extensions to agent's .pi/extensions ──────────────────────────
-AGENT_EXT_DIR="$AGENT_HOME/.pi/extensions"
-mkdir -p "$AGENT_EXT_DIR"
-for ext in /home/work/.pi/extensions/*.ts; do
-    [[ -f "$ext" ]] || continue
-    cp "$ext" "$AGENT_EXT_DIR/"
+    sleep 0.5
 done
-chown -R agent:agent "$AGENT_HOME/.pi"
 
-# ── exec the pi server as work ───────────────────────────────────────────────
-log "Handing off to pi server as user 'work'"
-exec gosu work "$@"
+# ── exec the pi server as agent ──────────────────────────────────────────────
+log "Handing off to pi server as user 'agent'"
+exec gosu agent "$@"

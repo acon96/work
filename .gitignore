@@ -1,0 +1,4 @@
+node_modules/
+# Pi Web runtime state (bind-mounted from container; not source code)
+.pi/web/*
+!.pi/web/.gitkeep

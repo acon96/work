@@ -10,7 +10,7 @@ Work is a web-based agent sandbox for light development and research tasks. It c
 
 #### 1.1 Dockerfile (`Dockerfile`)
 - [x] Base image: `node:24-slim` (Debian slim, Node 24 LTS)
-- [x] Two users: `work` (runs the server, owns `/app`) and `agent` (runs pi processes, heavily restricted)
+- [x] Single runtime user: `agent` (uid 1001); `root` reserved for build-time / privileged operations
 - [x] `sudo` installed; `agent` sudoers configured for allowlist-only, gated by `sudo-gate.ts` extension
 - [x] Capabilities dropped: `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`
 - [x] Seccomp: Docker default profile (tighten incrementally)
@@ -46,7 +46,7 @@ Work is a web-based agent sandbox for light development and research tasks. It c
 Extensions live in `extensions/*.ts`. They contain logic that travels with the pi process, not with any particular UI.
 
 #### 2.1 Off-the-shelf extensions (pinned in `package.json`)
-- [x] `@jmfederico/pi-web@0.13.4` — web browsing
+- [x] `@jmfederico/pi-web@1.202605.6` — web browsing
 - [x] `pi-searxng@1.0.4` — SearXNG search integration (sidecar container, configured via `SEARXNG_URL` env var)
 - [x] `pi-drawio@0.1.0` — Draw.io diagram editor
 - [x] `pi-wiki@2.0.0` — Wikipedia search
@@ -80,6 +80,17 @@ Extensions live in `extensions/*.ts`. They contain logic that travels with the p
 - [x] Simple todo tool registered as a pi extension
 - [x] Actions: `add`, `complete`, `delete`, `list`
 - [x] Persisted via `pi.appendEntry("todo-state", { items })`; restored on `session_start`/`session_tree`
+
+#### 2.6 Pi Web web control plane (`@jmfederico/pi-web`)
+- [x] Installed globally in Docker image via `npm install -g @jmfederico/pi-web`
+- [x] Split-process architecture: session daemon (`pi-web-sessiond`) + web server (`pi-web-server`)
+- [x] Session daemon started in entrypoint as `agent` user, listens on Unix socket at `~/.pi-web/sessiond.sock`
+- [x] Web server started in entrypoint as `agent` user, defaults to `127.0.0.1:8504`
+- [x] Persistent data directory at `~/.pi-web/` (projects.json, session daemon state)
+- [x] Configurable via env vars: `PI_WEB_PORT`, `PI_WEB_HOST`, `PI_WEB_DATA_DIR`, `PI_WEB_SESSIOND_SOCKET`
+- [x] Port 8504 exposed in docker-compose.yml
+- [x] Data volume persisted via bind mount to `.pi-web/` on host
+- [x] Reuses existing Pi auth and model configuration from `~/.pi/agent/`
 
 ---
 
