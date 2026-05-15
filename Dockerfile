@@ -91,6 +91,10 @@ RUN mkdir -p /home/agent/.pi/agent \
  && cp -r /app/skills/* /home/agent/.pi/agent/skills/ \
  && chown -R agent:agent /home/agent/.pi
 
+# add default settings and models config (can be overridden by bind mounts in docker-compose.yml)
+COPY .pi/agent/settings.json /home/agent/.pi/agent/settings.json
+COPY .pi/agent/models.json /home/agent/.pi/agent/models.json
+
 # Squid log directory (proxy user needs write access).
 RUN mkdir -p /var/log/squid && chown proxy:proxy /var/log/squid
 
