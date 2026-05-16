@@ -4,16 +4,16 @@
     "baseUrl": "http://llama-swap:8080",
     "apiKey": "sk-none",
     "fieldMapping": {
-      "contextWindow": "metadata.llamaswap.context_len",
-      "maxTokens": "metadata.llamaswap.max_tokens",
-      "reasoning": "metadata.llamaswap.reasoning",
+      "contextWindow": "meta.llamaswap.context_len",
+      "maxTokens": "meta.llamaswap.max_tokens",
+      "reasoning": "meta.llamaswap.thinking",
       "cost": {
-        "input": "metadata.llamaswap.cost_input",
-        "output": "metadata.llamaswap.cost_output",
-        "cacheRead": "metadata.llamaswap.cost_cache_read",
-        "cacheWrite": "metadata.llamaswap.cost_cache_write"
+        "input": "meta.llamaswap.cost_input",
+        "output": "meta.llamaswap.cost_output",
+        "cacheRead": "meta.llamaswap.cost_cache_read",
+        "cacheWrite": "meta.llamaswap.cost_cache_write"
       },
-      "thinkingFormat": "metadata.llamaswap.thinking_format"
+      "thinkingFormat": "meta.llamaswap.thinking_format"
     }
   }
 }
