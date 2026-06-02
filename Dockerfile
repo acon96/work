@@ -13,10 +13,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssl \
         ca-certificates \
         python3 \
+        python3-pip \
+        python3-venv \
+        python3-full \
         iptables \
         procps \
         jq \
         build-essential \
+        git \
+        zip \
+        unzip \
+        wget \
+        curl \
+        tree \
+        htop \
+        vim \
+        nano \
+        less \
+        file \
+        tar \
+        zstd \
+        lsof \
+        net-tools \
+        strace \
+        ltrace \
     && rm -rf /var/lib/apt/lists/*
 
 # ── users ─────────────────────────────────────────────────────────────────────
@@ -24,6 +44,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # We use uid 1001 for the agent user — the sole runtime user.
 # Root is available for build-time / privileged operations; gosu used at runtime.
 RUN useradd -m -u 1001 -s /bin/bash agent
+
+# Allow passwordless sudo for the agent user.
+# The sudo-gate.ts extension enforces command-level allowlisting at the application layer.
+RUN echo 'agent ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent \
+ && chmod 0440 /etc/sudoers.d/agent
 
 # Application directory (owned by root for build steps)
 RUN mkdir -p /app

@@ -1,2 +1,201 @@
 # llama-swap configuration
 # See https://github.com/mostlygeek/llama-swap for full options
+# --------------------------------------------------------------
+
+# Seconds to wait for llama.cpp to be available to serve requests
+# Default (and minimum): 15 seconds
+healthCheckTimeout: 300
+
+# valid log levels: debug, info (default), warn, error
+logLevel: info
+
+includeAliasesInList: true
+
+# shares loading progress as thinking content
+sendLoadingState: true
+
+macros:
+  llama-cli: >
+    /app/llama-server
+      --port ${PORT}
+      --flash-attn on
+      --no-webui
+      --metrics
+      --jinja
+      --threads 32
+
+  10k: 10240
+  16k: 16384
+  32k: 32768
+  40k: 40960
+  64k: 65536
+  100k: 102400
+  128k: 131072
+  168k: 172032 # 200k - 32k
+  200k: 200000
+  224k: 229376 # 256k - 32k
+  256k: 262144
+
+  # apparently k is more sensitive to quantization than v, so we can use a higher quality for v cache within the same memory budget
+  k-cache-q8: --cache-type-k q8_0
+  v-cache-q8: --cache-type-v q8_0
+  k-cache-q4: --cache-type-k q4_0
+  v-cache-q4: --cache-type-v q4_0
+  spec-ngram: --spec-type ngram-mod --spec-ngram-mod-n-max 16
+
+  batch-size-2048:  --batch-size 2048 --ubatch-size 2048
+  batch-size-4096:  --batch-size 4096 --ubatch-size 4096
+  batch-size-8192:  --batch-size 8192 --ubatch-size 8192
+  context-shift: --context-shift
+  auto-fit: --fit on
+
+  split-tensor: --split-mode tensor
+  split-layer: --split-mode layer
+  split-row: --split-mode row
+
+models:
+
+  "qwen3.6-27b":
+    cmd: >
+      ${llama-cli}
+        -np 1
+        --model /app/models/unsloth/Qwen3.6-27B-GGUF/Qwen3.6-27B-UD-Q6_K_XL.gguf
+        --ctx-size ${200k}
+        ${batch-size-4096}
+        ${spec-ngram}
+        ${split-tensor}
+        --reasoning-budget-message "-- Ok, I am done thinking for now. I need to make a tool call or respond to the user."
+    ttl: 1800
+    metadata:
+      context_len: ${168k}
+      max_tokens: ${32k}
+      thinking: true
+      thinking_format: qwen-chat-template
+    filters:
+      setParamsByID:
+        "${MODEL_ID}":
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          repeat_penalty: 1.0
+          thinking_budget_tokens: 8192
+        "${MODEL_ID}:high":
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          repeat_penalty: 1.1
+          thinking_budget_tokens: 24576
+        "${MODEL_ID}:coding":
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+          temperature: 0.6
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 0.0
+          repeat_penalty: 1.0
+          thinking_budget_tokens: 8192
+        "${MODEL_ID}:coding-high":
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+          temperature: 0.6
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 0.0
+          repeat_penalty: 1.1
+          thinking_budget_tokens: 24576
+        "${MODEL_ID}:instruct":
+          chat_template_kwargs:
+            enable_thinking: false
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          repeat_penalty: 1.0
+
+  "qwen3.6-35b-a3b":
+    cmd: >
+      ${llama-cli}
+        -np 1
+        --model /app/models/unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-MXFP4_MOE.gguf
+        --ctx-size ${256k}
+        ${batch-size-4096}
+        ${spec-ngram}
+        ${split-tensor}
+        --reasoning-budget-message "-- Ok, I am done thinking for now. I need to make a tool call or respond to the user."
+        --slot-save-path /app/kv-cache
+    ttl: 1800
+    metadata:
+      context_len: ${224k}
+      max_tokens: ${32k}
+      thinking: true
+      thinking_format: qwen-chat-template
+    filters:
+      setParamsByID:
+        "${MODEL_ID}":
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          repeat_penalty: 1.0
+          thinking_budget_tokens: 8192
+        "${MODEL_ID}:high":
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+          temperature: 1.0
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          repeat_penalty: 1.1
+          thinking_budget_tokens: 24576
+        "${MODEL_ID}:coding":
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+          temperature: 0.6
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 0.0
+          repeat_penalty: 1.0
+          thinking_budget_tokens: 8192
+        "${MODEL_ID}:coding-high":
+          chat_template_kwargs:
+            enable_thinking: true
+            preserve_thinking: true
+          temperature: 0.6
+          top_p: 0.95
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 0.0
+          repeat_penalty: 1.1
+          thinking_budget_tokens: 24576
+        "${MODEL_ID}:instruct":
+          chat_template_kwargs:
+            enable_thinking: false
+          temperature: 0.7
+          top_p: 0.8
+          top_k: 20
+          min_p: 0.0
+          presence_penalty: 1.5
+          repeat_penalty: 1.0

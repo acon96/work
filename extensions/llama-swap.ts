@@ -89,7 +89,7 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
       supportsDeveloperRole:   false,
       supportsReasoningEffort: false,
       maxTokensField:          "max_tokens",
-      thinkingFormat: fm?.thinkingFormat ?? "undefined",
+      thinkingFormat: fm?.thinkingFormat ?? undefined,
     },
   };
 }

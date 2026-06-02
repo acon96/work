@@ -6,6 +6,7 @@ searxng
 api.anthropic.com
 api.openai.com
 registry.npmjs.org
+pypi.org
 github.com
 objects.githubusercontent.com
 raw.githubusercontent.com
