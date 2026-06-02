@@ -53,22 +53,10 @@ RUN echo 'agent ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent \
 # Application directory (owned by root for build steps)
 RUN mkdir -p /app
 
-# ── squid MITM CA (Mode B) ────────────────────────────────────────────────────
-# Generated once at image build time; injected into the system trust store so
-# node processes running as agent/work trust it automatically.
-RUN openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
-        -subj "/CN=Work Proxy CA/O=Work Sandbox/C=US" \
-        -keyout /etc/squid/ssl-ca.key \
-        -out /etc/squid/ssl-ca.crt \
- && cp /etc/squid/ssl-ca.crt /usr/local/share/ca-certificates/work-proxy-ca.crt \
- && update-ca-certificates
-
-# Squid SSL certificate cache (used only in Mode B)
-# security_file_certgen -c creates the ssl_db directory itself; pre-creating it causes failure.
-RUN mkdir -p /var/lib/squid \
- && chown proxy:proxy /var/lib/squid \
- && chmod 750 /var/lib/squid \
- && /usr/lib/squid/security_file_certgen -c -s /var/lib/squid/ssl_db -M 4MB
+# ── squid dirs (runtime ssl_db generated in entrypoint) ───────────────────────
+RUN mkdir -p /var/lib/squid /var/log/squid \
+ && chown proxy:proxy /var/lib/squid /var/log/squid \
+ && chmod 750 /var/lib/squid
 
 # ── proxy env ─────────────────────────────────────────────────────────────────
 # All HTTP traffic from the agent user is routed through squid.

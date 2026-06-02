@@ -15,6 +15,31 @@ AGENT_HOME="/home/agent"
 
 log() { echo "[entrypoint] $*"; }
 
+# ── SSL cert generation (first-startup only) ──────────────────────────────────
+# Generate a self-signed MITM CA at first boot so the private key is never
+# baked into the image layers.  Injected into the system trust store so node
+# processes running as agent trust it automatically.
+SSL_FLAG="/etc/work/.ssl-initialized"
+if [[ ! -f "$SSL_FLAG" ]]; then
+    log "Generating self-signed SSL CA (first startup)"
+    openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
+        -subj "/CN=Work Proxy CA/O=Work Sandbox/C=US" \
+        -keyout /etc/squid/ssl-ca.key \
+        -out /etc/squid/ssl-ca.crt \
+     && cp /etc/squid/ssl-ca.crt /usr/local/share/ca-certificates/work-proxy-ca.crt \
+     && update-ca-certificates
+
+    # Squid SSL certificate cache (Mode B) — must be owned by proxy user.
+    # security_file_certgen -c creates the ssl_db directory itself; pre-creating it causes failure.
+    /usr/lib/squid/security_file_certgen -c -s /var/lib/squid/ssl_db -M 4MB \
+     && chown -R proxy:proxy /var/lib/squid/ssl_db
+
+    touch "$SSL_FLAG"
+    log "SSL CA generated and trusted."
+else
+    log "SSL CA already exists — skipping generation."
+fi
+
 # ── env-var allowlist overrides ──────────────────────────────────────────────
 # PROXY_ALLOWLIST: comma-separated domains, appends to /config/proxy-allowlist.txt
 if [[ -n "${PROXY_ALLOWLIST:-}" ]]; then
