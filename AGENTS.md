@@ -28,7 +28,7 @@ work/
 ├── extensions/
 │   ├── llama-swap.ts            pi extension: runtime model swapping (llama.cpp)
 │   ├── tools.ts                 pi extension: runtime tool toggling
-│   ├── watch.ts                 pi extension: polling watches
+│   ├── scheduler.ts             pi extension: scheduled tasks via supercronic
 │   └── todo.ts                  pi extension: persistent todo list
 └── .github/workflows/docker.yml CI/CD: build & publish image on push to main
 ```
@@ -196,11 +196,13 @@ The image is tagged with:
 - [ ] `URL_REWRITE_ENABLED=true docker compose up` — verify URL rewrite program runs in Mode B
 - [ ] sudoers file is immutable (`lsattr /etc/sudoers` shows `i` flag with CAP_LINUX_IMMUTABLE)
 - [ ] unlisted sudo commands are blocked by sudoers (exit code 1, sudo error message)
-- [ ] watch extension creates, fires, and auto-cancels correctly
+- [ ] scheduler extension creates tasks and supercronic executes them
 - [ ] todo extension persists across session restart
 - [ ] SearXNG container starts and responds on port 8080
 - [ ] `pi-data` volume persists session data across container rebuilds
 - [ ] Pi Web web server starts and responds on port 8504
+- [ ] Healthcheck passes for work container (squid, dnsmasq, pi-web, supercronic)
+- [ ] Healthcheck passes for searxng container
 
 ---
 

@@ -149,6 +149,15 @@ fi
 cp /etc/resolv.conf /etc/resolv.conf.upstream 2>/dev/null || true
 echo "nameserver 127.0.0.1" > /etc/resolv.conf
 
+# ── scheduler crontab ────────────────────────────────────────────────────────
+# Create empty crontab for scheduler extension if it doesn't exist
+SCHEDULER_CRONTAB="${AGENT_HOME}/scheduler.crontab"
+if [[ ! -f "$SCHEDULER_CRONTAB" ]]; then
+    touch "$SCHEDULER_CRONTAB"
+    chown agent:agent "$SCHEDULER_CRONTAB"
+    log "Created empty scheduler crontab at $SCHEDULER_CRONTAB"
+fi
+
 # ── dnsmasq config ───────────────────────────────────────────────────────────
 if [[ "$NETWORK_MODE" == "allowlist" ]]; then
     log "Network mode: allowlist"
@@ -240,6 +249,12 @@ for i in $(seq 1 20); do
     fi
     sleep 0.5
 done
+
+# ── start supercronic (scheduler) ────────────────────────────────────────────
+# Supercronic monitors the scheduler crontab and executes tasks as the agent user.
+log "Starting supercronic (crontab: $SCHEDULER_CRONTAB)"
+gosu agent supercronic "$SCHEDULER_CRONTAB" &
+SUPERCRONIC_PID=$!
 
 # ── exec the pi server as agent ──────────────────────────────────────────────
 log "Handing off to pi server as user 'agent'"

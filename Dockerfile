@@ -6,6 +6,7 @@ FROM node:24-slim
 # Note: squid and squid-openssl conflict — use squid-openssl only.
 # build-essential is needed for native node module compilation (node-pty).
 # e2fsprogs provides chattr for making sudoers immutable.
+# supercronic is a cron-compatible job scheduler designed for containers.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         sudo \
         gosu \
@@ -40,6 +41,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ltrace \
         e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install supercronic (cron for containers)
+ARG SUPERCRONIC_VERSION=0.2.33
+ARG SUPERCRONIC_SHA1SUM=71b0d58cc53f6bd72cf2f293e09e294b79c666d8
+RUN curl -fsSLO "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
+ && echo "${SUPERCRONIC_SHA1SUM}  supercronic-linux-amd64" | sha1sum -c - \
+ && chmod +x supercronic-linux-amd64 \
+ && mv supercronic-linux-amd64 /usr/local/bin/supercronic
 
 # ── users ─────────────────────────────────────────────────────────────────────
 # The node:24-slim image already has a `node` user (uid 1000).
@@ -78,7 +87,8 @@ COPY config/dnsmasq-open.conf      /etc/work/dnsmasq-open.conf
 COPY config/proxy-allowlist.txt     /config/proxy-allowlist.txt
 COPY scripts/squid-url-rewrite.py  /usr/local/bin/squid-url-rewrite
 COPY scripts/entrypoint.sh         /entrypoint.sh
-RUN chmod +x /entrypoint.sh /usr/local/bin/squid-url-rewrite
+COPY scripts/healthcheck.sh        /usr/local/bin/healthcheck
+RUN chmod +x /entrypoint.sh /usr/local/bin/squid-url-rewrite /usr/local/bin/healthcheck
 
 # ── workspace ─────────────────────────────────────────────────────────────────
 RUN mkdir -p /workspace && chown agent:agent /workspace
