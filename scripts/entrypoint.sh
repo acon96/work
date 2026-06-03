@@ -124,9 +124,14 @@ if ! visudo -c -f /etc/sudoers > /dev/null 2>&1; then
     exit 1
 fi
 
-# Make sudoers immutable so the agent cannot modify it
-chattr +i /etc/sudoers
-log "sudoers is now immutable (chattr +i)"
+# Make sudoers immutable so the agent cannot modify it (defense-in-depth).
+# This requires CAP_LINUX_IMMUTABLE; if it fails, continue anyway since the
+# file is already protected by Unix permissions (root:root 0440, unwritable by agent).
+if chattr +i /etc/sudoers 2>/dev/null; then
+    log "sudoers is now immutable (chattr +i)"
+else
+    log "Warning: chattr +i failed (missing CAP_LINUX_IMMUTABLE); sudoers protected by file permissions only"
+fi
 
 # ── auto-trust LLAMA_SWAP_URL in proxy allowlist ─────────────────────────────
 if [[ -n "${LLAMA_SWAP_URL:-}" ]]; then

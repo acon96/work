@@ -44,12 +44,13 @@ graph TB
 
 | Layer   | Mechanism                    | Blocks                                                     |
 | ------- | ---------------------------- | ---------------------------------------------------------- |
-| OS      | Immutable `/etc/sudoers`     | Non-allowlisted sudo commands (generated at startup, `chattr +i`) |
+| OS      | Immutable `/etc/sudoers`     | Non-allowlisted sudo commands (generated at startup, validated with `visudo -c`, protected by `chattr +i` and root:root 0440 permissions) |
 | Network | squid proxy (Mode A)         | All outbound except allowlisted HTTPS CONNECT              |
 | Network | squid proxy (Mode B)         | POST/PUT/PATCH, query strings, sensitive headers           |
 | DNS     | dnsmasq (Mode A)             | All non-allowlisted hostnames → `0.0.0.0`                  |
 | OS      | Docker `cap_drop`            | `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`                       |
-| OS      | Docker seccomp               | Default Docker profile                                     |
+| OS      | Docker `cap_add`             | `LINUX_IMMUTABLE` (allows `chattr +i` on sudoers)          |
+| OS      | Docker seccomp               | Unconfined (allows squid SSL interception)                 |
 
 ---
 
