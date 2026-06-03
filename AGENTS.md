@@ -26,7 +26,7 @@ work/
 │   ├── docker-run.sh            Convenience host launcher
 │   └── squid-url-rewrite.py     URL rewrite helper (strips query strings, Mode B)
 ├── extensions/
-│   ├── sudo-gate.ts             pi extension: intercepts dangerous bash calls
+│   ├── llama-swap.ts            pi extension: runtime model swapping (llama.cpp)
 │   ├── tools.ts                 pi extension: runtime tool toggling
 │   ├── watch.ts                 pi extension: polling watches
 │   └── todo.ts                  pi extension: persistent todo list
@@ -39,9 +39,9 @@ work/
 
 1. **There is only one runtime user: `agent` (uid 1001).** Never create additional users (`work`, `node`, etc.) for runtime use. Use `root` or `gosu root` only for privileged build steps.
 2. **All outbound traffic from the container is routed through squid (port 3128).** Do not add firewall rules or iptables that bypass this.
-3. **`rm -rf` and `chmod/chown 777` are unconditionally blocked** by `extensions/sudo-gate.ts`, regardless of allowlists.
+3. **Sudo commands are enforced by dynamically-generated `/etc/sudoers`** — at startup, the entrypoint converts `/config/sudo-allowlist.txt` into sudoers Cmnd_Alias directives, validates it with `visudo -c`, then attempts `chattr +i` to make it immutable (requires `CAP_LINUX_IMMUTABLE`). The file is already protected by Unix permissions (root:root 0440), so the immutable flag is defense-in-depth.
 4. **Mode A (allowlist)** is the secure default. Mode B (open-GET) trades security for convenience — never make Mode B the default.
-5. **The squid MITM CA private key is generated at build time** and never exported. Do not add steps that print or persist `/etc/squid/ssl-ca.key`.
+5. **The squid MITM CA private key is generated at first startup** and never exported. Do not add steps that print or persist `/etc/squid/ssl-ca.key`.
 6. **Session data persists via the `pi-data` Docker volume** at `/home/agent/.pi/sessions`. The global settings live at `/home/agent/.pi/agent/settings.json`. Never hardcode sessionDir to a non-persistent path.
 
 ---
@@ -194,8 +194,8 @@ The image is tagged with:
 - [ ] `NETWORK_MODE=allowlist docker compose up` — verify squid blocks non-allowlisted domains
 - [ ] `NETWORK_MODE=open-get docker compose up` — verify only GET/HEAD pass; POST returns 403
 - [ ] `URL_REWRITE_ENABLED=true docker compose up` — verify URL rewrite program runs in Mode B
-- [ ] sudo-gate extension blocks `rm -rf /` and `chmod 777 /etc` tool calls
-- [ ] sudo-gate extension blocks unlisted sudo commands
+- [ ] sudoers file is immutable (`lsattr /etc/sudoers` shows `i` flag with CAP_LINUX_IMMUTABLE)
+- [ ] unlisted sudo commands are blocked by sudoers (exit code 1, sudo error message)
 - [ ] watch extension creates, fires, and auto-cancels correctly
 - [ ] todo extension persists across session restart
 - [ ] SearXNG container starts and responds on port 8080

@@ -64,6 +64,8 @@ services:
       - NET_RAW
       - NET_ADMIN
       - SYS_PTRACE
+    cap_add:
+      - LINUX_IMMUTABLE  # Allows chattr +i on /etc/sudoers (defense-in-depth)
     security_opt:
       - seccomp:unconfined
 
