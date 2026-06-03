@@ -247,6 +247,16 @@ The scheduler extension uses [supercronic](https://github.com/aptible/supercroni
 /task schedule weekday "Weekday task" "0 9 * * 1-5"  # 9 AM Mon-Fri
 ```
 
+**Prompt constraints:**
+- Maximum 500 characters
+- Newlines are automatically converted to spaces
+- For complex instructions, write them to a file (e.g., `TASK_INSTRUCTIONS.md`) and prompt the scheduled agent to read from that file
+
+Example with file reference:
+```bash
+/task schedule complex-task "Read instructions from /workspace/daily_task.md and execute them" 1d
+```
+
 #### How it works
 
 1. **Command:** Use `/task schedule` or the `scheduler_task` tool
