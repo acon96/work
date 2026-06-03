@@ -12,7 +12,8 @@
       "extensions/llama-swap.ts"
     ],
     "skills": [
-      "skills/notify"
+      "skills/notify",
+      "skills/scheduled-tasks"
     ]
   },
   "dependencies": {

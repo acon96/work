@@ -103,9 +103,9 @@ Alternatively, pass the allowlist inline via the `PROXY_ALLOWLIST` env var (newl
 
 ### Adding an allowlisted sudo command
 
-Append the full command (including `sudo`) to `config/sudo-allowlist.txt`, e.g.:
+Append the command (without `sudo` prefix) to `config/sudo-allowlist.txt`, e.g.:
 ```
-sudo apt-get install -y curl
+apt-get install -y curl
 ```
 
 Alternatively, pass the allowlist inline via the `SUDO_ALLOWLIST` env var (newline-separated commands).

@@ -1,6 +1,6 @@
 # work
 
-A hardened Docker sandbox for "light" agentic development and research tasks, powered by [pi](https://pi.dev).
+A hardened Docker sandbox for "light" agentic development and research tasks, powered by [pi](https://pi.dev).  Feel free to fork and adapt for your own needs. Just update `package.json` with new extensions and skills, and add any necessary OS-level dependencies to the Dockerfile. Merging to `main` pushes a new `docker` image to GHCR for easy use.
 
 ---
 
@@ -70,6 +70,7 @@ docker pull ghcr.io/<owner>/work:main
 Edit `config/proxy-allowlist.txt` to add domains the agent needs to reach:
 
 ```
+api.openai.com
 api.anthropic.com
 registry.npmjs.org
 github.com
@@ -78,13 +79,17 @@ github.com
 Edit `config/sudo-allowlist.txt` to allow specific sudo commands (empty by default):
 
 ```
-sudo apt-get install -y curl
+apt-get update
+apt-get install -y curl
 ```
 
 ### 3. Run
 
+Provide any necessary environment variables (e.g., API keys) and start the container:
 ```bash
+LLAMA_SWAP_URL=https://ai.example.com docker compose up
 ANTHROPIC_API_KEY=sk-... docker compose up
+OPENAI_API_KEY=sk-... docker compose up
 ```
 
 The system starts three processes inside the container:
@@ -159,10 +164,10 @@ If a service fails its healthcheck after 3 retries, Docker will restart the cont
 | `SEARXNG_URL`         | `http://searxng:8080` | SearXNG endpoint (internal Docker URL); set to a custom URL for external SearXNG        |
 | `URL_REWRITE_ENABLED` | `false`               | Enable optional URL query-string stripping in Mode B (uses `squid-url-rewrite.py`)      |
 | `PROXY_ALLOWLIST`     | —                     | Newline-separated domains; overrides `config/proxy-allowlist.txt` at runtime            |
-| `SUDO_ALLOWLIST`      | —                     | Newline-separated sudo commands; overrides `config/sudo-allowlist.txt` at runtime       |
+| `SUDO_ALLOWLIST`      | —                     | Newline-separated commands (without sudo prefix); overrides `config/sudo-allowlist.txt` at runtime       |
+| `LLAMA_SWAP_URL`      | —                     | External llama-swap URL for dynamic model discovery (auto-adds host to proxy allowlist) |
 | `ANTHROPIC_API_KEY`   | —                     | Anthropic API key                                                                       |
 | `OPENAI_API_KEY`      | —                     | OpenAI API key                                                                          |
-| `LLAMA_SWAP_URL`      | —                     | External llama-swap URL for dynamic model discovery (auto-adds host to proxy allowlist) |
 
 ### config/proxy-allowlist.txt
 
@@ -170,7 +175,7 @@ One domain per line; subdomains are matched automatically.  Blank lines and `#` 
 
 ### config/sudo-allowlist.txt
 
-One full command per line including the `sudo` prefix.  Empty by default.  At container startup, the entrypoint converts this file into `/etc/sudoers` Cmnd_Alias directives, then makes `/etc/sudoers` immutable with `chattr +i` so the agent cannot modify sudo permissions.  Commands not listed here are blocked by sudo itself.  Can be overridden at runtime via the `SUDO_ALLOWLIST` env var.
+One command per line without the `sudo` prefix.  Empty by default.  At container startup, the entrypoint converts this file into `/etc/sudoers` Cmnd_Alias directives, then makes `/etc/sudoers` immutable with `chattr +i` so the agent cannot modify sudo permissions.  Commands not listed here are blocked by sudo itself.  Can be overridden at runtime via the `SUDO_ALLOWLIST` env var.
 
 ### config/searxng-settings.yml
 
@@ -209,26 +214,18 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 
 Custom commands provided by local extensions:
 
-| Command  | Extension       | Usage                                       | Description                                                    |
-|----------|-----------------|---------------------------------------------|----------------------------------------------------------------|
-| `/tools` | `pi-tools`      | `/tools state`                              | Show all tools and their enabled/disabled state                |
-|          |                 | `/tools toggle <name>`                      | Toggle a specific tool on or off                               |
-|          |                 | `/tools set <name1,name2,...>`              | Enable only the specified tools, disable all others            |
-| `/task`  | `pi-scheduler`  | `/task schedule <name> <prompt> [interval]` | Create a scheduled task (interval: 5m, 2h, 1d, or cron syntax) |
-|          |                 | `/task list`                                | Show all scheduled tasks                                       |
-|          |                 | `/task delete <name>`                       | Remove a scheduled task                                        |
+| Command  | Extension      | Usage                                       | Description                                                    |
+|----------|----------------|---------------------------------------------|----------------------------------------------------------------|
+| `/tools` | `pi-tools`     | `/tools state`                              | Show all tools and their enabled/disabled state                |
+|          |                | `/tools toggle <name>`                      | Toggle a specific tool on or off                               |
+|          |                | `/tools set <name1,name2,...>`              | Enable only the specified tools, disable all others            |
+| `/task`  | `pi-scheduler` | `/task schedule <name> <prompt> [interval]` | Create a scheduled task (interval: 5m, 2h, 1d, or cron syntax) |
+|          |                | `/task list`                                | Show all scheduled tasks                                       |
+|          |                | `/task delete <name>`                       | Remove a scheduled task                                        |
 
 ### Session persistence
 
 Session data is stored in `.pi/agents/sessions` (configured via `.pi/settings.json` → `sessionDir`).  The directory is bind-mounted from the host into the container so it persists across container rebuilds.
-
-### Skills
-
-Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) and copied into the container at `~/.pi/agent/skills/` for global discovery.
-
-| Skill    | Location         | Purpose                                                             |
-|----------|------------------|---------------------------------------------------------------------|
-| `notify` | `skills/notify/` | Send push notifications via ntfy.sh for background-triggered events |
 
 ### Scheduler
 
@@ -272,6 +269,15 @@ Example with file reference:
 ```
 
 The crontab file can also be inspected directly at `~/scheduler.crontab` for debugging.
+
+### Skills
+
+Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) and copied into the container at `~/.pi/agent/skills/` for global discovery.
+
+| Skill             | Location                  | Purpose                                                                      |
+|-------------------|---------------------------|------------------------------------------------------------------------------|
+| `notify`          | `skills/notify/`          | Send push notifications via ntfy.sh for background-triggered events          |
+| `scheduled-tasks` | `skills/scheduled-tasks/` | "explainer" on how to properly use the `scheduler.ts` extension's toolset    |
 
 ---
 
