@@ -6,7 +6,6 @@
   "keywords": ["pi-package"],
   "pi": {
     "extensions": [
-      "extensions/sudo-gate.ts",
       "extensions/tools.ts",
       "extensions/watch.ts",
       "extensions/todo.ts",

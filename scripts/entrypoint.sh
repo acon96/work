@@ -59,6 +59,75 @@ if [[ -n "${SUDO_ALLOWLIST:-}" ]]; then
     done
 fi
 
+# ── generate restricted sudoers from allowlist ───────────────────────────────
+# Convert /config/sudo-allowlist.txt into a restrictive /etc/sudoers that only
+# permits the exact commands listed. Then make it immutable so the agent cannot
+# modify sudo permissions at runtime.
+log "Generating restricted sudoers from $CONFIG_DIR/sudo-allowlist.txt"
+
+# Start with a minimal sudoers header
+cat > /etc/sudoers <<'EOF'
+# Generated from /config/sudo-allowlist.txt at container startup
+# DO NOT EDIT — this file is made immutable via chattr +i
+Defaults env_reset
+Defaults mail_badpass
+Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Root can do anything
+root ALL=(ALL:ALL) ALL
+
+# Agent user: restricted to allowlisted commands only
+EOF
+
+# Parse each line from the allowlist and convert to sudoers Cmnd_Alias + permission
+if [[ -f "$CONFIG_DIR/sudo-allowlist.txt" ]]; then
+    CMND_NUM=0
+    CMND_ALIASES=()
+    
+    while IFS= read -r line; do
+        # Skip comments and blank lines
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        
+        # Strip leading "sudo " prefix if present (allowlist format includes it)
+        cmd="${line#sudo }"
+        cmd="${cmd#sudo}" # handle "sudo" with no space
+        cmd=$(echo "$cmd" | xargs) # trim whitespace
+        
+        [[ -z "$cmd" ]] && continue
+        
+        CMND_NUM=$((CMND_NUM + 1))
+        ALIAS_NAME="ALLOWED_CMD_${CMND_NUM}"
+        CMND_ALIASES+=("$ALIAS_NAME")
+        
+        # Add Cmnd_Alias line
+        echo "Cmnd_Alias $ALIAS_NAME = $cmd" >> /etc/sudoers
+    done < "$CONFIG_DIR/sudo-allowlist.txt"
+    
+    # Add the agent user's permission line
+    if [[ ${#CMND_ALIASES[@]} -gt 0 ]]; then
+        ALIAS_LIST=$(IFS=', '; echo "${CMND_ALIASES[*]}")
+        echo "agent ALL=(ALL) NOPASSWD: $ALIAS_LIST" >> /etc/sudoers
+        log "Allowlisted ${#CMND_ALIASES[@]} sudo command(s) for agent user"
+    else
+        log "Warning: sudo allowlist is empty — agent has no sudo access"
+        echo "agent ALL=(ALL) NOPASSWD: /usr/bin/false" >> /etc/sudoers
+    fi
+else
+    log "Warning: $CONFIG_DIR/sudo-allowlist.txt not found — agent has no sudo access"
+    echo "agent ALL=(ALL) NOPASSWD: /usr/bin/false" >> /etc/sudoers
+fi
+
+# Validate sudoers syntax
+if ! visudo -c -f /etc/sudoers > /dev/null 2>&1; then
+    log "ERROR: Generated sudoers file has syntax errors! Dumping for debug:"
+    cat /etc/sudoers
+    exit 1
+fi
+
+# Make sudoers immutable so the agent cannot modify it
+chattr +i /etc/sudoers
+log "sudoers is now immutable (chattr +i)"
+
 # ── auto-trust LLAMA_SWAP_URL in proxy allowlist ─────────────────────────────
 if [[ -n "${LLAMA_SWAP_URL:-}" ]]; then
     # Extract hostname (strip scheme, port, trailing slash)

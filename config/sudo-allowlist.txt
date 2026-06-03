@@ -1,10 +1,11 @@
 # Sudo command allowlist
 # One FULL command per line (including the "sudo" prefix).
 # Blank lines and lines beginning with # are ignored.
-# The agent will be blocked from running any sudo command not listed here,
-# even if the pi-sudo-gate extension would otherwise allow it.
+# The entrypoint converts this file into /etc/sudoers Cmnd_Alias directives at startup,
+# then makes /etc/sudoers immutable so the agent cannot modify sudo permissions.
 #
 # Example:
+#   sudo apt-get update
 #   sudo apt-get install -y curl
 #
 # This file is EMPTY by default — add entries only as needed.

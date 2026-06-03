@@ -50,7 +50,7 @@ A hardened Docker sandbox for "light" agentic development and research tasks, po
 
 | Layer   | Mechanism                | Blocks                                                     |
 | ------- | ------------------------ | ---------------------------------------------------------- |
-| Process | `pi-sudo-gate` extension | `sudo` (allowlist + approval), `rm -rf`, `chmod/chown 777` |
+| OS      | `sudo` wrapper script    | Non-whitelisted sudo commands (exit 126, unconditionally)   |
 | Network | squid proxy (Mode A)     | All outbound except allowlisted HTTPS CONNECT              |
 | Network | squid proxy (Mode B)     | POST/PUT/PATCH, query strings, sensitive headers           |
 | DNS     | dnsmasq (Mode A)         | All non-allowlisted hostnames → `0.0.0.0`                  |
@@ -143,7 +143,7 @@ One domain per line; subdomains are matched automatically.  Blank lines and `#` 
 
 ### config/sudo-allowlist.txt
 
-One full command per line including the `sudo` prefix.  Empty by default.  Commands not listed here are blocked by the `sudo-gate` pi extension.  Can be overridden at runtime via the `SUDO_ALLOWLIST` env var.
+One full command per line including the `sudo` prefix.  Empty by default.  Commands not listed here are blocked at the OS level by the `sudo` wrapper script (exit code 126).  Can be overridden at runtime via the `SUDO_ALLOWLIST` env var.
 
 ### config/searxng-settings.yml
 
@@ -161,7 +161,6 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 
 | Extension       | File                       | Purpose                                                                                                        |
 | --------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `pi-sudo-gate`  | `extensions/sudo-gate.ts`  | Intercepts `bash` tool calls; blocks dangerous commands; requires allowlist check + UI confirmation for `sudo` |
 | `pi-tools`      | `extensions/tools.ts`      | `/tools` command; runtime enable/disable of individual tools; persists selection                               |
 | `pi-watch`      | `extensions/watch.ts`      | `watch` tool; polls a shell command; fires a follow-up message when a condition is met                         |
 | `pi-todo`       | `extensions/todo.ts`       | `todo` tool; persistent todo list (add / complete / delete / list)                                             |

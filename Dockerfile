@@ -1,10 +1,11 @@
 # ── base ─────────────────────────────────────────────────────────────────────
-FROM node:24-slim AS base
+FROM node:24-slim
 
 # Install system dependencies.
 # squid-openssl is the SSL-bumping build of squid (needed for Mode B MITM).
 # Note: squid and squid-openssl conflict — use squid-openssl only.
 # build-essential is needed for native node module compilation (node-pty).
+# e2fsprogs provides chattr for making sudoers immutable.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         sudo \
         gosu \
@@ -37,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         net-tools \
         strace \
         ltrace \
+        e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
 # ── users ─────────────────────────────────────────────────────────────────────
@@ -45,10 +47,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Root is available for build-time / privileged operations; gosu used at runtime.
 RUN useradd -m -u 1001 -s /bin/bash agent
 
-# Allow passwordless sudo for the agent user.
-# The sudo-gate.ts extension enforces command-level allowlisting at the application layer.
+# Passwordless sudo for the agent user — allowlist will be enforced at runtime
+# by regenerating /etc/sudoers from /config/sudo-allowlist.txt in entrypoint.sh.
 RUN echo 'agent ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent \
  && chmod 0440 /etc/sudoers.d/agent
+
+# Copy sudo allowlist (will be processed into /etc/sudoers at container startup)
+COPY config/sudo-allowlist.txt /config/sudo-allowlist.txt
 
 # Application directory (owned by root for build steps)
 RUN mkdir -p /app
@@ -70,7 +75,6 @@ COPY config/squid-allowlist.conf   /etc/work/squid-allowlist.conf
 COPY config/squid-open-get.conf    /etc/work/squid-open-get.conf
 COPY config/dnsmasq-allowlist.conf /etc/work/dnsmasq-allowlist.conf
 COPY config/dnsmasq-open.conf      /etc/work/dnsmasq-open.conf
-COPY config/sudo-allowlist.txt     /config/sudo-allowlist.txt
 COPY config/proxy-allowlist.txt     /config/proxy-allowlist.txt
 COPY scripts/squid-url-rewrite.py  /usr/local/bin/squid-url-rewrite
 COPY scripts/entrypoint.sh         /entrypoint.sh
