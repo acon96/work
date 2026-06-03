@@ -86,20 +86,30 @@ export default function toolsExtension(pi: ExtensionAPI) {
 			const subcommand = (argv[0] ?? "state").toLowerCase();
 			if (subcommand === "state") {
 				emitState(pi);
+				const active = pi.getActiveTools();
+				const inactive = allTools.filter((name) => !active.includes(name));
+				let msg = `**Active tools** (${active.length}): ${active.join(", ") || "(none)"}\n`;
+				if (inactive.length > 0) {
+					msg += `\n**Inactive tools** (${inactive.length}): ${inactive.join(", ")}`;
+				}
+				ctx.ui.notify(msg, "info");
 				return;
 			}
 
 			if (subcommand === "toggle") {
 				const toolName = argv[1];
 				if (!toolName || !allSet.has(toolName)) {
+					const msg = `Unknown tool: ${toolName ?? "(missing)"}`;
 					if (ctx.hasUI) {
-						ctx.ui.notify(`Unknown tool: ${toolName ?? "(missing)"}`, "warning");
+						ctx.ui.notify(msg, "warning");
 					}
+					ctx.ui.notify(msg, "info");
 					emitState(pi);
 					return;
 				}
 
-				if (activeTools.has(toolName)) {
+				const wasActive = activeTools.has(toolName);
+				if (wasActive) {
 					activeTools.delete(toolName);
 				} else {
 					activeTools.add(toolName);
@@ -107,6 +117,7 @@ export default function toolsExtension(pi: ExtensionAPI) {
 
 				applyAndPersist(pi, Array.from(activeTools));
 				emitState(pi);
+				ctx.ui.notify(`Tool **${toolName}** is now ${wasActive ? "disabled" : "enabled"}.`, "info");
 				return;
 			}
 
@@ -121,12 +132,15 @@ export default function toolsExtension(pi: ExtensionAPI) {
 				activeTools = new Set(dedupe(names));
 				applyAndPersist(pi, Array.from(activeTools));
 				emitState(pi);
+				ctx.ui.notify(`Enabled ${names.length} tool(s): ${names.join(", ")}`, "info");
 				return;
 			}
 
+			const msg = "Usage: /tools state | /tools toggle <name> | /tools set <name1,name2,...>";
 			if (ctx.hasUI) {
-				ctx.ui.notify("Usage: /tools state | /tools toggle <name> | /tools set <name1,name2,...>", "warning");
+				ctx.ui.notify(msg, "warning");
 			}
+			ctx.ui.notify(msg, "info");
 			emitState(pi);
 		},
 	});

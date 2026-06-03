@@ -6,56 +6,50 @@ A hardened Docker sandbox for "light" agentic development and research tasks, po
 
 ## Architecture overview
 
-```
-┌───────────────────────────────────────────────────────────────────┐
-│  Docker Compose network                                            │
-│                                                                    │
-│  ┌────────────────────────────────────────────────────────────┐   │
-│  │  work container (Node 24 LTS)                               │   │
-│  │                                                             │   │
- │  ┌────────────────────────────────────────────────────┐    │   │
-  │  │  pi server (user: agent)                           │    │   │
-  │  │  bash / fs / other tools ── extension hooks        │    │   │
-  │  └────────────────────────────────────────────────────┘    │   │
-│  │          │                                   │              │   │
-│  │          │  outbound HTTP/HTTPS              │              │   │
-│  │          ▼                                   ▼              │   │
-│  │  ┌────────────────────────────────────────────────────┐    │   │
-│  │  │  squid (port 3128)                                 │    │   │
-│  │  │  Mode A: CONNECT-only to allowlisted domains       │    │   │
-│  │  │  Mode B: GET/HEAD-only, SSL bump, strip headers    │    │   │
-│  │  └────────────────────────────────────────────────────┘    │   │
-│  │          │                                                  │   │
-│  │          ▼                                                  │   │
-│  │  ┌──────────────────────┐                                   │   │
-│  │  │  dnsmasq (127.0.0.1) │                                   │   │
-│  │  │  Mode A: default-deny│                                   │   │
-│  │  │  Mode B: permissive  │                                   │   │
-│  │  └──────────────────────┘                                   │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                                                    │
-│  ┌────────────────────────────────────────────────────────────┐   │
-│  │  searxng container                                          │   │
-│  │  Open-source metasearch engine (port 8080)                  │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-│                                                                    │
-│  ┌────────────────────────────────────────────────────────────┐   │
-│  │  llama-swap container (optional, --profile llama-swap)      │   │
-│  │  Dynamic LLM model swapping (port 8080)                     │   │
-│  └─────────────────────────────────────────────────────────────┘   │
-└───────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph docker["Docker Compose Network"]
+        subgraph work["work container (Node 24 LTS)"]
+            pi["Pi Server<br/>(user: agent)<br/>bash, fs, tools<br/>extension hooks"]
+            squid["Squid Proxy<br/>:3128<br/><br/>Mode A: CONNECT-only<br/>to allowlisted domains<br/><br/>Mode B: GET/HEAD-only<br/>SSL bump, strip headers"]
+            dnsmasq["dnsmasq<br/>127.0.0.1<br/><br/>Mode A: default-deny<br/>Mode B: permissive"]
+            sudoers["/etc/sudoers<br/>(immutable)<br/>Generated from<br/>sudo-allowlist.txt"]
+            
+            pi -->|HTTP/HTTPS| squid
+            pi -->|DNS| dnsmasq
+            pi -.->|sudo calls| sudoers
+            squid -->|upstream| dnsmasq
+        end
+        
+        searxng["SearXNG<br/>:8080<br/>Metasearch Engine"]
+        llama["llama-swap<br/>:8080<br/>(optional)<br/>Dynamic Model<br/>Discovery"]
+        
+        pi -.->|search| searxng
+        pi -.->|models| llama
+    end
+    
+    squid -->|filtered| internet((Internet))
+    dnsmasq -->|filtered| internet
+    
+    style work fill:#e1f5ff
+    style pi fill:#b3e5fc
+    style squid fill:#fff9c4
+    style dnsmasq fill:#fff9c4
+    style sudoers fill:#ffccbc
+    style searxng fill:#c8e6c9
+    style llama fill:#d1c4e9
 ```
 
 ### Security layers
 
-| Layer   | Mechanism                | Blocks                                                     |
-| ------- | ------------------------ | ---------------------------------------------------------- |
-| OS      | `sudo` wrapper script    | Non-whitelisted sudo commands (exit 126, unconditionally)   |
-| Network | squid proxy (Mode A)     | All outbound except allowlisted HTTPS CONNECT              |
-| Network | squid proxy (Mode B)     | POST/PUT/PATCH, query strings, sensitive headers           |
-| DNS     | dnsmasq (Mode A)         | All non-allowlisted hostnames → `0.0.0.0`                  |
-| OS      | Docker `cap_drop`        | `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`                       |
-| OS      | Docker seccomp           | Default Docker profile                                     |
+| Layer   | Mechanism                    | Blocks                                                     |
+| ------- | ---------------------------- | ---------------------------------------------------------- |
+| OS      | Immutable `/etc/sudoers`     | Non-allowlisted sudo commands (generated at startup, `chattr +i`) |
+| Network | squid proxy (Mode A)         | All outbound except allowlisted HTTPS CONNECT              |
+| Network | squid proxy (Mode B)         | POST/PUT/PATCH, query strings, sensitive headers           |
+| DNS     | dnsmasq (Mode A)             | All non-allowlisted hostnames → `0.0.0.0`                  |
+| OS      | Docker `cap_drop`            | `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`                       |
+| OS      | Docker seccomp               | Default Docker profile                                     |
 
 ---
 
@@ -100,7 +94,24 @@ sudo apt-get install -y curl
 ANTHROPIC_API_KEY=sk-... docker compose up
 ```
 
-Open the pi web UI at **http://localhost:8504** and SearXNG at **http://localhost:8080**.
+The system starts three processes inside the container:
+- **dnsmasq** — DNS filtering
+- **squid** — HTTP/HTTPS proxy  
+- **Pi Web** — Web UI and session daemon (ports 8504)
+
+Open the Pi Web UI at **http://localhost:8504** and SearXNG at **http://localhost:8080**.
+
+### 4. Using Pi Web
+
+Pi Web provides a browser-based interface for interacting with the agent:
+
+1. **Projects** — Create or open a project (folder on the server)
+2. **Workspaces** — For git repos, create worktrees; for non-git folders, use the project directly
+3. **Sessions** — Start chat sessions with Pi Coding Agent inside a workspace
+
+All chat history and session data persists in the `pi-data` Docker volume at `~/.pi/sessions`.
+
+Use `/tools state` to see available tools, `/tools toggle <name>` to enable/disable tools, and other extension commands as needed.
 
 #### Optional: llama-swap
 
@@ -143,7 +154,7 @@ One domain per line; subdomains are matched automatically.  Blank lines and `#` 
 
 ### config/sudo-allowlist.txt
 
-One full command per line including the `sudo` prefix.  Empty by default.  Commands not listed here are blocked at the OS level by the `sudo` wrapper script (exit code 126).  Can be overridden at runtime via the `SUDO_ALLOWLIST` env var.
+One full command per line including the `sudo` prefix.  Empty by default.  At container startup, the entrypoint converts this file into `/etc/sudoers` Cmnd_Alias directives, then makes `/etc/sudoers` immutable with `chattr +i` so the agent cannot modify sudo permissions.  Commands not listed here are blocked by sudo itself.  Can be overridden at runtime via the `SUDO_ALLOWLIST` env var.
 
 ### config/searxng-settings.yml
 
@@ -164,7 +175,7 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 | `pi-tools`      | `extensions/tools.ts`      | `/tools` command; runtime enable/disable of individual tools; persists selection                               |
 | `pi-watch`      | `extensions/watch.ts`      | `watch` tool; polls a shell command; fires a follow-up message when a condition is met                         |
 | `pi-todo`       | `extensions/todo.ts`       | `todo` tool; persistent todo list (add / complete / delete / list)                                             |
-| `pi-llama-swap` | `extensions/llama-swap.ts` | Llama-swap dynamic model discovery extension                                                                   |
+| `pi-llama-swap` | `extensions/llama-swap.ts` | Llama-swap dynamic model discovery; enables `/swap` command for runtime model switching                        |
 
 ### Off-the-shelf extensions (loaded via `package.json` → `pi install`)
 
@@ -178,6 +189,16 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 | `pi-subagents`       | `0.24.2`       | Spawn sub-agent sessions                |
 | `pi-lama-swap`       | `0.1.0`        | Llama-swap model discovery integration  |
 
+### Commands
+
+Custom commands provided by local extensions:
+
+| Command   | Extension  | Usage                                               | Description                                                    |
+| --------- | ---------- | --------------------------------------------------- | -------------------------------------------------------------- |
+| `/tools`  | `pi-tools` | `/tools state`                                      | Show all tools and their enabled/disabled state                |
+|           |            | `/tools toggle <name>`                              | Toggle a specific tool on or off                               |
+|           |            | `/tools set <name1,name2,...>`                      | Enable only the specified tools, disable all others            |
+| `/swap`   | `pi-llama-swap` | `/swap <model-name>`                          | Switch to a different LLM model from llama-swap                |
 
 ### Session persistence
 
@@ -198,7 +219,7 @@ Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) an
 ### Mode A — Allowlist (default)
 
 - Squid listens on port 3128, accepts only `CONNECT` to allowlisted domains.
-- dnsmasq returns `0.0.0.0` for all domains by default; only allowlisted domains receive real DNS lookups (forwarded to `8.8.8.8`).
+- dnsmasq returns `0.0.0.0` for all domains by default; only allowlisted domains receive real DNS lookups (forwarded to upstream resolver from container's original resolv.conf).
 - Designed to prevent bulk data exfiltration and DNS-based exfiltration.
 
 ### Mode B — Open-GET
