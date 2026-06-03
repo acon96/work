@@ -34,15 +34,15 @@ graph TB
 
 ### Security layers
 
-| Layer   | Mechanism                    | Blocks                                                     |
-| ------- | ---------------------------- | ---------------------------------------------------------- |
-| OS      | Immutable `/etc/sudoers`     | Non-allowlisted sudo commands (generated at startup, validated with `visudo -c`, protected by `chattr +i` and root:root 0440 permissions) |
-| Network | squid proxy (Mode A)         | All outbound except allowlisted HTTPS CONNECT              |
-| Network | squid proxy (Mode B)         | POST/PUT/PATCH, query strings, sensitive headers           |
-| DNS     | dnsmasq (Mode A)             | All non-allowlisted hostnames → `0.0.0.0`                  |
-| OS      | Docker `cap_drop`            | `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`                       |
-| OS      | Docker `cap_add`             | `LINUX_IMMUTABLE` (allows `chattr +i` on sudoers)          |
-| OS      | Docker seccomp               | Unconfined (allows squid SSL interception)                 |
+| Layer   | Mechanism                | Blocks                                                                                                                                    |
+|---------|--------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| OS      | Immutable `/etc/sudoers` | Non-allowlisted sudo commands (generated at startup, validated with `visudo -c`, protected by `chattr +i` and root:root 0440 permissions) |
+| Network | squid proxy (Mode A)     | All outbound except allowlisted HTTPS CONNECT                                                                                             |
+| Network | squid proxy (Mode B)     | POST/PUT/PATCH, query strings, sensitive headers                                                                                          |
+| DNS     | dnsmasq (Mode A)         | All non-allowlisted hostnames → `0.0.0.0`                                                                                                 |
+| OS      | Docker `cap_drop`        | `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`                                                                                                      |
+| OS      | Docker `cap_add`         | `LINUX_IMMUTABLE` (allows `chattr +i` on sudoers)                                                                                         |
+| OS      | Docker seccomp           | Unconfined (allows squid SSL interception)                                                                                                |
 
 ---
 
@@ -121,6 +121,29 @@ LLAMA_SWAP_URL=https://ai.example.com docker compose up
 ```
 When `LLAMA_SWAP_URL` is set, the work container will auto-trust the host in the proxy allowlist. Configure your pi models to point to this URL for dynamic model discovery.
 
+### Health Monitoring
+
+Docker healthchecks verify that all critical services are running:
+
+**Work Container** (checked every 30s):
+- ✅ Squid proxy listening on port 3128
+- ✅ dnsmasq DNS resolver listening on port 53
+- ✅ Pi Web session daemon socket exists
+- ✅ Pi Web server listening on port 8504
+- ✅ Supercronic scheduler process running
+
+**SearXNG Container** (checked every 30s):
+- ✅ HTTP endpoint responding on port 8080
+
+View health status:
+```bash
+docker ps                        # Shows health status in output
+docker inspect work --format='{{.State.Health.Status}}'
+docker compose ps                # Shows health status for all services
+```
+
+If a service fails its healthcheck after 3 retries, Docker will restart the container automatically.
+
 ---
 
 ## Configuration reference
@@ -128,7 +151,7 @@ When `LLAMA_SWAP_URL` is set, the work container will auto-trust the host in the
 ### Environment variables
 
 | Variable              | Default               | Description                                                                             |
-| --------------------- | --------------------- | --------------------------------------------------------------------------------------- |
+|-----------------------|-----------------------|-----------------------------------------------------------------------------------------|
 | `NETWORK_MODE`        | `allowlist`           | `allowlist` — strict outbound control; `open-get` — all domains but GET/HEAD only       |
 | `WORKSPACE_DIR`       | `./workspace`         | Host path mounted as `/workspace`                                                       |
 | `CONFIG_DIR`          | `./config`            | Host path mounted as `/config`                                                          |
@@ -163,18 +186,18 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 
 ### Local extensions (bundled)
 
-| Extension       | File                       | Purpose                                                                                                        |
-| --------------- | -------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `pi-tools`      | `extensions/tools.ts`      | `/tools` command; runtime enable/disable of individual tools; persists selection                               |
-| `pi-watch`      | `extensions/watch.ts`      | `watch` tool; polls a shell command; fires a follow-up message when a condition is met                         |
-| `pi-todo`       | `extensions/todo.ts`       | `todo` tool; persistent todo list (add / complete / delete / list)                                             |
-| `pi-llama-swap` | `extensions/llama-swap.ts` | Llama-swap dynamic model discovery; enables `/swap` command for runtime model switching                        |
+| Extension       | File                       | Purpose                                                                                                          |
+|-----------------|----------------------------|------------------------------------------------------------------------------------------------------------------|
+| `pi-tools`      | `extensions/tools.ts`      | `/tools` command; runtime enable/disable of individual tools; persists selection                                 |
+| `pi-scheduler`  | `extensions/scheduler.ts`  | `/task` command and tool; manage scheduled tasks via supercronic (cron for containers); persists to crontab file |
+| `pi-todo`       | `extensions/todo.ts`       | `todo` tool; persistent todo list (add / complete / delete / list)                                               |
+| `pi-llama-swap` | `extensions/llama-swap.ts` | Llama-swap dynamic model discovery; enables `/swap` command for runtime model switching                          |
 
 ### Off-the-shelf extensions (loaded via `package.json` → `pi install`)
 
 | Extension            | Pinned Version | Purpose                                 |
-| -------------------- | -------------- | --------------------------------------- |
-| `@jmfederico/pi-web` | `1.202605.6`   | Web browsing extension                  |
+|----------------------|----------------|-----------------------------------------|
+| `@jmfederico/pi-web` | `1.202606.0`   | Web browsing extension                  |
 | `pi-searxng`         | `1.0.4`        | SearXNG search integration              |
 | `pi-drawio`          | `0.1.0`        | Draw.io diagram editor                  |
 | `pi-wiki`            | `2.0.0`        | Wikipedia search                        |
@@ -186,24 +209,59 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 
 Custom commands provided by local extensions:
 
-| Command   | Extension  | Usage                                               | Description                                                    |
-| --------- | ---------- | --------------------------------------------------- | -------------------------------------------------------------- |
-| `/tools`  | `pi-tools` | `/tools state`                                      | Show all tools and their enabled/disabled state                |
-|           |            | `/tools toggle <name>`                              | Toggle a specific tool on or off                               |
-|           |            | `/tools set <name1,name2,...>`                      | Enable only the specified tools, disable all others            |
-| `/swap`   | `pi-llama-swap` | `/swap <model-name>`                          | Switch to a different LLM model from llama-swap                |
+| Command  | Extension       | Usage                                       | Description                                                    |
+|----------|-----------------|---------------------------------------------|----------------------------------------------------------------|
+| `/tools` | `pi-tools`      | `/tools state`                              | Show all tools and their enabled/disabled state                |
+|          |                 | `/tools toggle <name>`                      | Toggle a specific tool on or off                               |
+|          |                 | `/tools set <name1,name2,...>`              | Enable only the specified tools, disable all others            |
+| `/task`  | `pi-scheduler`  | `/task schedule <name> <prompt> [interval]` | Create a scheduled task (interval: 5m, 2h, 1d, or cron syntax) |
+|          |                 | `/task list`                                | Show all scheduled tasks                                       |
+|          |                 | `/task delete <name>`                       | Remove a scheduled task                                        |
 
 ### Session persistence
 
-Session data is stored in `.pi/sessions` (configured via `.pi/settings.json` → `sessionDir`).  The directory is bind-mounted from the host into the container so it persists across container rebuilds.
+Session data is stored in `.pi/agents/sessions` (configured via `.pi/settings.json` → `sessionDir`).  The directory is bind-mounted from the host into the container so it persists across container rebuilds.
 
 ### Skills
 
 Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) and copied into the container at `~/.pi/agent/skills/` for global discovery.
 
 | Skill    | Location         | Purpose                                                             |
-| -------- | ---------------- | ------------------------------------------------------------------- |
+|----------|------------------|---------------------------------------------------------------------|
 | `notify` | `skills/notify/` | Send push notifications via ntfy.sh for background-triggered events |
+
+### Scheduler
+
+The scheduler extension uses [supercronic](https://github.com/aptible/supercronic) to manage scheduled agent tasks. Tasks are stored in `~/scheduler.crontab` and persist across container restarts.
+
+#### Creating scheduled tasks
+
+```bash
+# Human-readable intervals (converted to cron)
+/task schedule hourly-check "Check system status" 1h
+/task schedule daily-report "Generate daily report" 1d
+/task schedule frequent "Quick check" 5m
+
+# Cron syntax for advanced scheduling
+/task schedule nightly "Run backup" "0 2 * * *"  # 2 AM daily
+/task schedule weekday "Weekday task" "0 9 * * 1-5"  # 9 AM Mon-Fri
+```
+
+#### How it works
+
+1. **Command:** Use `/task schedule` or the `scheduler_task` tool
+2. **Storage:** Task metadata and prompts stored as comments in `~/scheduler.crontab`
+3. **Execution:** Supercronic monitors the crontab and runs `pi --mode print --message "<prompt>"` at scheduled times
+4. **Isolation:** Each task runs in an isolated agent session with full tool access
+
+#### Viewing and managing tasks
+
+```bash
+/task list                    # Show all tasks with schedules
+/task delete hourly-check     # Remove a task
+```
+
+The crontab file can also be inspected directly at `~/scheduler.crontab` for debugging.
 
 ---
 
