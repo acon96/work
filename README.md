@@ -30,14 +30,6 @@ graph TB
     
     squid -->|filtered| internet((Internet))
     dnsmasq -->|filtered| internet
-    
-    style work fill:#e1f5ff
-    style pi fill:#b3e5fc
-    style squid fill:#fff9c4
-    style dnsmasq fill:#fff9c4
-    style sudoers fill:#ffccbc
-    style searxng fill:#c8e6c9
-    style llama fill:#d1c4e9
 ```
 
 ### Security layers
