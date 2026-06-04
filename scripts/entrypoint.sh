@@ -151,7 +151,8 @@ echo "nameserver 127.0.0.1" > /etc/resolv.conf
 
 # ── scheduler crontab ────────────────────────────────────────────────────────
 # Create empty crontab for scheduler extension if it doesn't exist
-SCHEDULER_CRONTAB="${AGENT_HOME}/scheduler.crontab"
+# Store in /workspace so it persists across container restarts
+SCHEDULER_CRONTAB="/workspace/.scheduler.crontab"
 if [[ ! -f "$SCHEDULER_CRONTAB" ]]; then
     touch "$SCHEDULER_CRONTAB"
     chown agent:agent "$SCHEDULER_CRONTAB"
