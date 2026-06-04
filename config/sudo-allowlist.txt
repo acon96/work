@@ -1,11 +1,11 @@
 # Sudo command allowlist
-# One FULL command per line (including the "sudo" prefix).
+# One command per line (without the "sudo" prefix).
 # Blank lines and lines beginning with # are ignored.
 # The entrypoint converts this file into /etc/sudoers Cmnd_Alias directives at startup,
 # then makes /etc/sudoers immutable so the agent cannot modify sudo permissions.
 #
 # Example:
-#   sudo apt-get update
-#   sudo apt-get install -y curl
+#   apt-get update
+#   apt-get install -y curl
 #
 # This file is EMPTY by default — add entries only as needed.

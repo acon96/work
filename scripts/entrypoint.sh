@@ -50,7 +50,7 @@ if [[ -n "${PROXY_ALLOWLIST:-}" ]]; then
     done
 fi
 
-# SUDO_ALLOWLIST: comma-separated sudo commands, appends to /config/sudo-allowlist.txt
+# SUDO_ALLOWLIST: comma-separated commands (without sudo prefix), appends to /config/sudo-allowlist.txt
 if [[ -n "${SUDO_ALLOWLIST:-}" ]]; then
     log "Sudo allowlist provided via env var"
     IFS=',' read -ra COMMANDS <<< "$SUDO_ALLOWLIST"
@@ -88,7 +88,7 @@ if [[ -f "$CONFIG_DIR/sudo-allowlist.txt" ]]; then
         # Skip comments and blank lines
         [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
         
-        # Strip leading "sudo " prefix if present (allowlist format includes it)
+        # Strip leading "sudo " prefix if present (for backward compatibility)
         cmd="${line#sudo }"
         cmd="${cmd#sudo}" # handle "sudo" with no space
         cmd=$(echo "$cmd" | xargs) # trim whitespace
@@ -253,7 +253,7 @@ done
 # ── start supercronic (scheduler) ────────────────────────────────────────────
 # Supercronic monitors the scheduler crontab and executes tasks as the agent user.
 log "Starting supercronic (crontab: $SCHEDULER_CRONTAB)"
-gosu agent supercronic "$SCHEDULER_CRONTAB" &
+gosu agent supercronic -inotify "$SCHEDULER_CRONTAB" &
 SUPERCRONIC_PID=$!
 
 # ── exec the pi server as agent ──────────────────────────────────────────────

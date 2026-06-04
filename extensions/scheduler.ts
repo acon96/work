@@ -16,6 +16,11 @@
  *   - Human-readable: 5m, 2h, 1d (converted to cron syntax)
  *   - Cron syntax: star-slash-5 space star space star space star space star (every 5 minutes)
  *
+ * Prompt constraints:
+ *   - Max 500 characters
+ *   - Newlines automatically converted to spaces
+ *   - For longer instructions, write to a file and reference it in the prompt
+ *
  * The crontab file format stores metadata as comments with TASK and PROMPT directives
  * followed by the cron schedule line that executes pi in print mode.
  */
@@ -24,11 +29,12 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import * as os from "node:os";
 
 // ── constants ─────────────────────────────────────────────────────────────────
-const CRONTAB_PATH = path.join(os.homedir(), "scheduler.crontab");
+// Use explicit path to match entrypoint.sh and supercronic
+const CRONTAB_PATH = "/home/agent/scheduler.crontab";
 const LOG_PREFIX = "[scheduler]";
+const MAX_PROMPT_LENGTH = 500; // Characters - keep prompts concise
 
 // ── types ─────────────────────────────────────────────────────────────────────
 interface TaskDefinition {
@@ -104,6 +110,44 @@ function cronToHuman(cron: string): string {
  */
 function escapeShell(str: string): string {
   return str.replace(/'/g, "'\\''");
+}
+
+/**
+ * Validate and sanitize a prompt for crontab usage.
+ * Returns an error message if invalid, or the sanitized prompt if valid.
+ */
+function validatePrompt(prompt: string): { valid: boolean; sanitized?: string; error?: string } {
+  // Check for empty prompt
+  if (!prompt || prompt.trim().length === 0) {
+    return { valid: false, error: "Prompt cannot be empty." };
+  }
+
+  // Check length
+  if (prompt.length > MAX_PROMPT_LENGTH) {
+    return {
+      valid: false,
+      error: `Prompt too long (${prompt.length} chars, max ${MAX_PROMPT_LENGTH}). ` +
+        "For complex instructions, write them to a file and prompt the scheduled agent to read from that file.",
+    };
+  }
+
+  // Check for newlines and sanitize
+  if (prompt.includes("\n") || prompt.includes("\r")) {
+    // Replace newlines with spaces
+    const sanitized = prompt.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+    
+    // After sanitization, check if it's still too long
+    if (sanitized.length > MAX_PROMPT_LENGTH) {
+      return {
+        valid: false,
+        error: "Prompt too long after removing newlines. Write instructions to a file and reference it instead.",
+      };
+    }
+
+    return { valid: true, sanitized };
+  }
+
+  return { valid: true, sanitized: prompt.trim() };
 }
 
 /**
@@ -244,12 +288,12 @@ export default function schedulerExtension(pi: ExtensionAPI) {
         }
 
         // Extract prompt (everything between name and optional interval)
-        let prompt: string;
+        let rawPrompt: string;
         let cron: string;
 
         if (intervalOrCron) {
           // Prompt is argv[2]
-          prompt = argv[2];
+          rawPrompt = argv[2];
           const parsedCron = intervalToCron(intervalOrCron);
           if (!parsedCron) {
             ctx.ui.notify(
@@ -261,9 +305,17 @@ export default function schedulerExtension(pi: ExtensionAPI) {
           cron = parsedCron;
         } else {
           // No interval specified, use everything from argv[2] onward as prompt
-          prompt = argv.slice(2).join(" ");
+          rawPrompt = argv.slice(2).join(" ");
           cron = "0 * * * *"; // Default: hourly
         }
+
+        // Validate and sanitize prompt
+        const validation = validatePrompt(rawPrompt);
+        if (!validation.valid) {
+          ctx.ui.notify(validation.error!, "error");
+          return;
+        }
+        const prompt = validation.sanitized!;
 
         const tasks = readCrontab();
 
@@ -365,12 +417,19 @@ export default function schedulerExtension(pi: ExtensionAPI) {
 
       if (action === "schedule") {
         const name = params.name?.trim() ?? "";
-        const prompt = params.prompt ?? "";
+        const rawPrompt = params.prompt ?? "";
         const intervalInput = params.interval ?? "1h";
 
-        if (!name || !prompt) {
+        if (!name || !rawPrompt) {
           return { content: [{ type: "text", text: "Error: name and prompt are required." }], details: {} };
         }
+
+        // Validate and sanitize prompt
+        const validation = validatePrompt(rawPrompt);
+        if (!validation.valid) {
+          return { content: [{ type: "text", text: `Error: ${validation.error}` }], details: {} };
+        }
+        const prompt = validation.sanitized!;
 
         const cron = intervalToCron(intervalInput);
         if (!cron) {

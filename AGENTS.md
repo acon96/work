@@ -103,9 +103,9 @@ Alternatively, pass the allowlist inline via the `PROXY_ALLOWLIST` env var (newl
 
 ### Adding an allowlisted sudo command
 
-Append the full command (including `sudo`) to `config/sudo-allowlist.txt`, e.g.:
+Append the command (without `sudo` prefix) to `config/sudo-allowlist.txt`, e.g.:
 ```
-sudo apt-get install -y curl
+apt-get install -y curl
 ```
 
 Alternatively, pass the allowlist inline via the `SUDO_ALLOWLIST` env var (newline-separated commands).
@@ -183,7 +183,6 @@ The GitHub Actions workflow at `.github/workflows/docker.yml` builds and pushes 
 
 The image is tagged with:
 - branch name (e.g. `main`)
-- semantic version (`v1.2.3` → `1.2.3` and `1.2`)
 - git SHA prefix (`sha-abc1234`)
 
 ---
