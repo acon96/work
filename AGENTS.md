@@ -183,7 +183,6 @@ The GitHub Actions workflow at `.github/workflows/docker.yml` builds and pushes 
 
 The image is tagged with:
 - branch name (e.g. `main`)
-- semantic version (`v1.2.3` → `1.2.3` and `1.2`)
 - git SHA prefix (`sha-abc1234`)
 
 ---
