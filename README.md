@@ -229,10 +229,11 @@ Session data is stored in `.pi/agents/sessions` (configured via `.pi/settings.js
 
 ### Scheduler
 
-The scheduler extension uses [supercronic](https://github.com/aptible/supercronic) to manage scheduled agent tasks. Tasks are stored in `~/scheduler.crontab` and persist across container restarts.
+The scheduler extension uses [supercronic](https://github.com/aptible/supercronic) to manage scheduled agent tasks. Tasks are stored in `/workspace/.scheduler.crontab` and persist across container restarts.
 
 #### Creating scheduled tasks
 
+**Simple tasks (via command):**
 ```bash
 # Human-readable intervals (converted to cron)
 /task schedule hourly-check "Check system status" 1h
@@ -244,31 +245,63 @@ The scheduler extension uses [supercronic](https://github.com/aptible/supercroni
 /task schedule weekday "Weekday task" "0 9 * * 1-5"  # 9 AM Mon-Fri
 ```
 
-**Prompt constraints:**
-- Maximum 500 characters
-- Newlines are automatically converted to spaces
-- For complex instructions, write them to a file (e.g., `TASK_INSTRUCTIONS.md`) and prompt the scheduled agent to read from that file
+**Advanced tasks (via `scheduler_task` tool):**
 
-Example with file reference:
-```bash
-/task schedule complex-task "Read instructions from /workspace/daily_task.md and execute them" 1d
+For tasks requiring prompt files, tool restrictions, skills, custom models, or ephemeral sessions, use the `scheduler_task` tool:
+
+```javascript
+// Task with prompt file
+scheduler_task({
+  action: "schedule",
+  name: "daily-report",
+  promptFile: "tasks/daily_report_prompt.md",
+  interval: "1d"
+})
+
+// Task with restricted tools and custom model
+scheduler_task({
+  action: "schedule",
+  name: "readonly-audit",
+  prompt: "Audit the codebase for security issues",
+  tools: ["read", "grep", "find", "ls"],
+  model: "sonnet",
+  interval: "12h"
+})
+
+// Task with skills and ephemeral session
+scheduler_task({
+  action: "schedule",
+  name: "notification-check",
+  promptFile: "tasks/check_and_notify.md",
+  skills: ["notify", "scheduled-tasks"],
+  ephemeralSession: true,
+  interval: "1h"
+})
 ```
+
+**Prompt options:**
+- **`prompt`**: Inline string (max 500 characters). Newlines are automatically converted to spaces.
+- **`promptFile`**: Path to a file containing the prompt (workspace-relative or absolute). Passed to pi via `@filename` syntax.
+- **`tools`**: Array of allowed tool names (e.g., `["read", "grep", "find"]`)
+- **`skills`**: Array of skill names (e.g., `["notify", "scheduled-tasks"]`). Skills are loaded from `~/.pi/agent/skills/`.
+- **`model`**: Model pattern or ID (e.g., `"sonnet"`, `"gpt-4o"`)
+- **`ephemeralSession`**: Don't save session to disk (useful for recurring tasks that don't need history)
 
 #### How it works
 
-1. **Command:** Use `/task schedule` or the `scheduler_task` tool
-2. **Storage:** Task metadata and prompts stored as comments in `~/scheduler.crontab`
-3. **Execution:** Supercronic monitors the crontab and runs `pi --mode print --message "<prompt>"` at scheduled times
-4. **Isolation:** Each task runs in an isolated agent session with full tool access
+1. **Command:** Use `/task schedule` for simple tasks, or `scheduler_task` tool for advanced features
+2. **Storage:** Task metadata stored as comments in `/workspace/.scheduler.crontab`
+3. **Execution:** Supercronic monitors the crontab and runs `pi --mode print` with configured options at scheduled times
+4. **Isolation:** Each task runs in an isolated agent session
 
 #### Viewing and managing tasks
 
 ```bash
-/task list                    # Show all tasks with schedules
+/task list                    # Show all tasks with schedules and options
 /task delete hourly-check     # Remove a task
 ```
 
-The crontab file can also be inspected directly at `~/scheduler.crontab` for debugging.
+The crontab file can also be inspected directly at `/workspace/.scheduler.crontab` for debugging.
 
 ### Skills
 
