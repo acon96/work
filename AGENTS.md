@@ -29,7 +29,8 @@ work/
 │   ├── llama-swap.ts            pi extension: runtime model swapping (llama.cpp)
 │   ├── tools.ts                 pi extension: runtime tool toggling
 │   ├── scheduler.ts             pi extension: scheduled tasks via supercronic
-│   └── todo.ts                  pi extension: persistent todo list
+│   ├── todo.ts                  pi extension: persistent todo list
+│   └── superagent.ts            pi extension: weak-model-gathers, strong-model-plans hybrid
 └── .github/workflows/docker.yml CI/CD: build & publish image on push to main
 ```
 
@@ -90,6 +91,44 @@ pi.on("tool_call", async (event, ctx) => {
 ### Executing shell commands
 
 Use `pi.exec("bash", ["-c", command])` which returns `{ stdout, stderr, code, killed }`.
+
+### pi-superagent extension
+
+The `pi-superagent` extension inverts the traditional agent hierarchy: instead of a strong model driving weak subagents, the weak model gathers all context and sends it to a strong model ONCE for strategic planning.
+
+**Cost optimization strategy:**
+- Local model: gathers context via read/bash (free)
+- Strong model: receives complete context, generates plan (single API call)
+- Local model: executes plan (free)
+
+**Configuration:**
+- Fully dynamic - no environment variables needed
+- Uses pi's existing provider/model configuration (via `pi login`)
+- Model is specified per-invocation in tool parameters
+
+**Usage:**
+The local model calls the `superagent_plan` tool with:
+- `provider` — provider name (e.g., "anthropic", "openai", "openrouter")
+- `model` — model ID (e.g., "claude-sonnet-4-20250514", "o1", "gpt-4o")
+- `userQuery` — the task that needs planning
+- `filePaths` — array of relevant file paths
+- `bashCommands` — array of diagnostic commands to run
+- `additionalContext` — optional extra context
+- `maxContextBytes` — optional context budget (default: 100000)
+
+The strong model receives all gathered context in a single prompt and returns a structured plan. The local model then executes the plan step-by-step.
+
+**Slash commands:**
+- `/superagent models` — list all available models for planning
+- `/superagent providers` — list configured providers and auth status
+
+**Why this works:**
+- Local agent models are excellent at following instructions but poor at planning
+- Cloud reasoning models are excellent at planning but expensive per token
+- Single strong-model call eliminates multi-turn cache-read costs
+- 60-80% cost reduction vs. traditional strong-model-drives-all workflows
+
+See `extensions/pi-superagent.README.md` for full documentation.
 
 ---
 
@@ -197,6 +236,7 @@ The image is tagged with:
 - [ ] unlisted sudo commands are blocked by sudoers (exit code 1, sudo error message)
 - [ ] scheduler extension creates tasks and supercronic executes them
 - [ ] todo extension persists across session restart
+- [ ] pi-superagent extension loads and `/superagent models` lists available models
 - [ ] SearXNG container starts and responds on port 8080
 - [ ] `pi-data` volume persists session data across container rebuilds
 - [ ] Pi Web web server starts and responds on port 8504

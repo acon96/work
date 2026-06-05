@@ -9,10 +9,12 @@
       "extensions/tools.ts",
       "extensions/scheduler.ts",
       "extensions/todo.ts",
-      "extensions/llama-swap.ts"
+      "extensions/llama-swap.ts",
+      "extensions/superagent.ts"
     ],
     "skills": [
-      "skills/notify"
+      "skills/notify",
+      "skills/superagent"
     ]
   },
   "dependencies": {
