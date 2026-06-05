@@ -1,0 +1,7 @@
+[user]
+	name = Pi Agent
+	email = agent@pi.dev
+[safe]
+	directory = *
+[pull]
+    rebase = true
