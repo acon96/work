@@ -84,7 +84,8 @@ COPY config/squid-allowlist.conf   /etc/work/squid-allowlist.conf
 COPY config/squid-open-get.conf    /etc/work/squid-open-get.conf
 COPY config/dnsmasq-allowlist.conf /etc/work/dnsmasq-allowlist.conf
 COPY config/dnsmasq-open.conf      /etc/work/dnsmasq-open.conf
-COPY config/proxy-allowlist.txt     /config/proxy-allowlist.txt
+COPY config/proxy-allowlist.txt    /config/proxy-allowlist.txt
+COPY config/agent.gitconfig        /home/agent/.gitconfig
 COPY scripts/squid-url-rewrite.py  /usr/local/bin/squid-url-rewrite
 COPY scripts/entrypoint.sh         /entrypoint.sh
 COPY scripts/healthcheck.sh        /usr/local/bin/healthcheck
