@@ -38,12 +38,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # install UV to a system-wide location so all users (including agent) can use it
-ENV UV_PYTHON_INSTALL_DIR=/usr/local/share/uv/python
-RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
- && uv python install 3.13 --default \
- && ln -sf "$(uv python find 3.13)" /usr/local/bin/python3.13 \
- && ln -sf /usr/local/bin/python3.13 /usr/local/bin/python3 \
- && ln -sf /usr/local/bin/python3 /usr/local/bin/python
+ENV UV_PYTHON_BIN_DIR=/usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+RUN uv python install 3.13 --default && which python3
 
 # Install supercronic (cron for containers)
 ARG SUPERCRONIC_VERSION=0.2.33
