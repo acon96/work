@@ -14,10 +14,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dnsmasq \
         openssl \
         ca-certificates \
-        python3 \
-        python3-pip \
-        python3-venv \
-        python3-full \
         iptables \
         procps \
         jq \
@@ -41,6 +37,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ltrace \
         e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
+
+# instal Python via UV so we can use UV as the package manager
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+RUN uv python install 3.13
 
 # Install supercronic (cron for containers)
 ARG SUPERCRONIC_VERSION=0.2.33
