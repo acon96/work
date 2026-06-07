@@ -40,7 +40,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # instal Python via UV so we can use UV as the package manager
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:${PATH}"
-RUN uv python install 3.13
+RUN uv python install 3.13 --default
 
 # Install supercronic (cron for containers)
 ARG SUPERCRONIC_VERSION=0.2.33
