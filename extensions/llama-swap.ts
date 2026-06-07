@@ -10,7 +10,7 @@
  * the top-level "llama-swap" key and ignores "providers" entirely.
  */
 
-import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ProviderModelConfig, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 
 // ── Config types ──────────────────────────────────────────────────────────────
@@ -66,16 +66,39 @@ async function loadConfig(): Promise<LlamaSwapConfig> {
   return {};
 }
 
-function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
+function mapModel(raw: any, ctx: ExtensionContext, fm: FieldMapping): ProviderModelConfig {
   const rawInput = dig(raw, fm.input);
   const input: Array<"text" | "image"> = Array.isArray(rawInput)
     ? rawInput.filter((v: string) => v === "text" || v === "image")
     : ["text"];
 
+  const isPeer = dig(raw, "meta.llamaswap.peerID") !== undefined;
+  const modelId = raw.id as string;
+
+  if (isPeer && modelId.split("/").length === 2) {
+    // attempt to find the peer's ID in our existing model registry and apply those settings
+    const [provider, modelName] = modelId.split("/");
+    const foundModel = ctx.modelRegistry.find(provider, modelName);
+
+    if (foundModel) {
+      return {
+        id:               modelId,
+        name:             foundModel.name,
+        reasoning:        foundModel.reasoning,
+        input:            foundModel?.input,
+        contextWindow:    foundModel?.contextWindow,
+        maxTokens:        foundModel?.maxTokens,
+        cost:             foundModel?.cost,
+        compat:           foundModel?.compat,
+        thinkingLevelMap: foundModel?.thinkingLevelMap,
+      }
+    }
+  }
+
   return {
-    id:            raw.id as string,
+    id:            modelId,
     name:          (dig(raw, fm.name) as string | undefined) ?? raw.name ?? raw.id,
-    reasoning:     Boolean(dig(raw, fm.reasoning)),
+    reasoning:     Boolean(dig(raw, fm.reasoning)) || true,
     input,
     contextWindow: Number(dig(raw, fm.contextWindow)) || 128000,
     maxTokens:     Number(dig(raw, fm.maxTokens))     || 32768,
@@ -107,26 +130,28 @@ export default async function llamaSwapExtension(pi: ExtensionAPI) {
     return;
   }
 
-  const resolvedBaseUrl = envBaseUrl ?? baseUrl!;
-  const resolvedApiKey = envApiKey ?? apiKey!;
+  pi.on("resources_discover", async (event, ctx) => {
+    const resolvedBaseUrl = envBaseUrl ?? baseUrl!;
+    const resolvedApiKey = envApiKey ?? apiKey!;
 
-  try {
-    const res = await fetch(`${resolvedBaseUrl}/v1/models`);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    try {
+      const res = await fetch(`${resolvedBaseUrl}/v1/models`);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
-    const { data } = (await res.json()) as { data: any[] };
-    const models = (data ?? []).map((m) => mapModel(m, fieldMapping));
+      const { data } = (await res.json()) as { data: any[] };
+      const models = (data ?? []).map((m) => mapModel(m, ctx, fieldMapping));
 
-    pi.registerProvider("llama-swap", {
-      name:    "llama-swap",
-      baseUrl: `${resolvedBaseUrl}/v1`,
-      apiKey:  resolvedApiKey,
-      api:     "openai-completions",
-      models,
-    });
+      pi.registerProvider("llama-swap", {
+        name:    "llama-swap",
+        baseUrl: `${resolvedBaseUrl}/v1`,
+        apiKey:  resolvedApiKey,
+        api:     "openai-completions",
+        models,
+      });
 
-    console.log(`[llama-swap] Registered ${models.length} model(s) from ${resolvedBaseUrl}`);
-  } catch (err) {
-    console.error(`[llama-swap] Failed: ${err instanceof Error ? err.message : String(err)}`);
-  }
+      console.log(`[llama-swap] Registered ${models.length} model(s) from ${resolvedBaseUrl}`);
+    } catch (err) {
+      console.error(`[llama-swap] Failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  });
 }
