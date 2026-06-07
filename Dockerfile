@@ -37,10 +37,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
-# instal Python via UV so we can use UV as the package manager
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:${PATH}"
-RUN uv python install 3.13 --default
+# install UV to a system-wide location so all users (including agent) can use it
+ENV UV_PYTHON_INSTALL_DIR=/usr/local/share/uv/python
+RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh \
+ && uv python install 3.13 --default \
+ && ln -sf "$(uv python find 3.13)" /usr/local/bin/python3.13 \
+ && ln -sf /usr/local/bin/python3.13 /usr/local/bin/python3 \
+ && ln -sf /usr/local/bin/python3 /usr/local/bin/python
 
 # Install supercronic (cron for containers)
 ARG SUPERCRONIC_VERSION=0.2.33
