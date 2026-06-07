@@ -11,3 +11,4 @@ github.com
 objects.githubusercontent.com
 raw.githubusercontent.com
 ntfy.sh
+huggingface.co
