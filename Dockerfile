@@ -34,12 +34,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lsof \
         net-tools \
         strace \
-        ltrace \
         e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
 # instal Python via UV so we can use UV as the package manager
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:${PATH}"
 RUN uv python install 3.13
 
 # Install supercronic (cron for containers)
