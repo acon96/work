@@ -1,6 +1,6 @@
 # Proxy domain allowlist — Mode A
 # One domain per line.  Blank lines and lines beginning with # are ignored.
-# Subdomains are matched automatically (squid dstdomain ACL).
+# Subdomains are matched if there is a leading dot (squid dstdomain ACL).
 
 searxng
 api.anthropic.com
@@ -12,6 +12,6 @@ github.com
 objects.githubusercontent.com
 raw.githubusercontent.com
 ntfy.sh
-huggingface.co
-hf.co
+.huggingface.co
+.hf.co
 arxiv.org
