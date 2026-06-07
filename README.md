@@ -90,6 +90,7 @@ Provide any necessary environment variables (e.g., API keys) and start the conta
 LLAMA_SWAP_URL=https://ai.example.com docker compose up
 ANTHROPIC_API_KEY=sk-... docker compose up
 OPENAI_API_KEY=sk-... docker compose up
+GIT_CREDENTIAL_HOST=github.com GIT_CREDENTIAL_USERNAME=oauth2 GIT_CREDENTIAL_PASSWORD=ghp_... docker compose up
 ```
 
 The system starts three processes inside the container:
@@ -98,6 +99,38 @@ The system starts three processes inside the container:
 - **Pi Web** — Web UI and session daemon (ports 8504)
 
 Open the Pi Web UI at **http://localhost:8504** and SearXNG at **http://localhost:8080**.
+
+### Git HTTPS credentials
+
+There is not a strong security boundary between `git` and a credential helper running inside the same `agent` runtime: if the agent can use the credential for `git fetch`, it can usually trigger the same helper path directly. This image therefore supports an explicit startup-time fallback instead of claiming a secret-preserving in-container helper.
+
+At container startup, if git credential env vars are provided, the entrypoint writes them into `/home/agent/.git-credentials`, sets `credential.helper=store`, and persists the config in `/home/agent/.gitconfig`.
+
+Use one of these forms:
+
+```bash
+# Single host credential assembled at startup
+GIT_CREDENTIAL_HOST=github.com \
+GIT_CREDENTIAL_USERNAME=oauth2 \
+GIT_CREDENTIAL_PASSWORD=ghp_... \
+docker compose up
+
+# Optional repo/path-specific match
+GIT_CREDENTIAL_HOST=github.com \
+GIT_CREDENTIAL_PATH=owner/repo.git \
+GIT_CREDENTIAL_USERNAME=oauth2 \
+GIT_CREDENTIAL_PASSWORD=ghp_... \
+docker compose up
+
+# Multiple preformatted entries (newline-separated)
+GIT_CREDENTIAL_URLS=$'https://oauth2:token1@github.com/owner/repo.git\nhttps://user:token2@gitlab.com/group/project.git' \
+docker compose up
+```
+
+Notes:
+- `GIT_CREDENTIAL_PATH` enables `credential.useHttpPath=true` so git can distinguish per-repo credentials on the same host.
+- `GIT_CREDENTIAL_URLS` must already be URL-encoded if usernames or passwords contain reserved URL characters.
+- The credentials are persisted on disk inside the container user home; treat this as a convenience fallback, not a secret-isolation mechanism.
 
 ### 4. Using Pi Web
 
@@ -166,6 +199,12 @@ If a service fails its healthcheck after 3 retries, Docker will restart the cont
 | `PROXY_ALLOWLIST`     | —                     | Newline-separated domains; overrides `config/proxy-allowlist.txt` at runtime            |
 | `SUDO_ALLOWLIST`      | —                     | Newline-separated commands (without sudo prefix); overrides `config/sudo-allowlist.txt` at runtime       |
 | `LLAMA_SWAP_URL`      | —                     | External llama-swap URL for dynamic model discovery (auto-adds host to proxy allowlist) |
+| `GIT_CREDENTIAL_URLS` | —                     | Newline-separated full `.git-credentials` entries written at startup                      |
+| `GIT_CREDENTIAL_PROTOCOL` | `https`          | Protocol used when assembling a single git credential entry                               |
+| `GIT_CREDENTIAL_HOST` | —                     | Hostname for a single git HTTPS credential entry                                          |
+| `GIT_CREDENTIAL_PATH` | —                     | Optional repo/path scope; enables `credential.useHttpPath=true`                           |
+| `GIT_CREDENTIAL_USERNAME` | —                | Username for a single git HTTPS credential entry                                          |
+| `GIT_CREDENTIAL_PASSWORD` | —                | Password or PAT for a single git HTTPS credential entry                                   |
 | `ANTHROPIC_API_KEY`   | —                     | Anthropic API key                                                                       |
 | `OPENAI_API_KEY`      | —                     | OpenAI API key                                                                          |
 

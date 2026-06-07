@@ -52,6 +52,15 @@ services:
       SUDO_ALLOWLIST: ${SUDO_ALLOWLIST:-}
       # Llama-swap URL (for dynamic model discovery).
       LLAMA_SWAP_URL: ${LLAMA_SWAP_URL:-}
+      # Optional HTTPS git credentials written to /home/agent/.git-credentials at startup.
+      # Either provide GIT_CREDENTIAL_URLS as newline-separated full credential URLs,
+      # or provide the host/user/password tuple below.
+      GIT_CREDENTIAL_URLS: ${GIT_CREDENTIAL_URLS:-}
+      GIT_CREDENTIAL_PROTOCOL: ${GIT_CREDENTIAL_PROTOCOL:-https}
+      GIT_CREDENTIAL_HOST: ${GIT_CREDENTIAL_HOST:-}
+      GIT_CREDENTIAL_PATH: ${GIT_CREDENTIAL_PATH:-}
+      GIT_CREDENTIAL_USERNAME: ${GIT_CREDENTIAL_USERNAME:-}
+      GIT_CREDENTIAL_PASSWORD: ${GIT_CREDENTIAL_PASSWORD:-}
       # Pi Web web server port
       PI_WEB_PORT: ${PI_WEB_PORT:-8504}
       # Pi Web web server bind host (must be 0.0.0.0 inside the container so

@@ -12,8 +12,46 @@ NETWORK_MODE="${NETWORK_MODE:-allowlist}"
 CONFIG_DIR="/config"
 WORK_CONFIG="/etc/work"
 AGENT_HOME="/home/agent"
+AGENT_GITCONFIG="$AGENT_HOME/.gitconfig"
+AGENT_GIT_CREDENTIALS="$AGENT_HOME/.git-credentials"
 
 log() { echo "[entrypoint] $*"; }
+
+urlencode() {
+    jq -nr --arg value "$1" '$value|@uri'
+}
+
+configure_git_credentials() {
+    local helper_mode=""
+    local use_http_path="false"
+    local credential_entry=""
+
+    if [[ -n "${GIT_CREDENTIAL_URLS:-}" ]]; then
+        log "Configuring git credentials from GIT_CREDENTIAL_URLS"
+        printf '%s\n' "$GIT_CREDENTIAL_URLS" > "$AGENT_GIT_CREDENTIALS"
+        helper_mode="store"
+    elif [[ -n "${GIT_CREDENTIAL_HOST:-}" && -n "${GIT_CREDENTIAL_USERNAME:-}" && -n "${GIT_CREDENTIAL_PASSWORD:-}" ]]; then
+        log "Configuring git credentials for host ${GIT_CREDENTIAL_HOST}"
+
+        credential_entry="${GIT_CREDENTIAL_PROTOCOL:-https}://$(urlencode "$GIT_CREDENTIAL_USERNAME"):$(urlencode "$GIT_CREDENTIAL_PASSWORD")@${GIT_CREDENTIAL_HOST}"
+        if [[ -n "${GIT_CREDENTIAL_PATH:-}" ]]; then
+            credential_entry+="/${GIT_CREDENTIAL_PATH#/}"
+            use_http_path="true"
+        fi
+
+        printf '%s\n' "$credential_entry" > "$AGENT_GIT_CREDENTIALS"
+        helper_mode="store"
+    fi
+
+    if [[ -n "$helper_mode" ]]; then
+        chmod 0600 "$AGENT_GIT_CREDENTIALS"
+        chown agent:agent "$AGENT_GIT_CREDENTIALS"
+
+        git config --file "$AGENT_GITCONFIG" credential.helper "$helper_mode"
+        git config --file "$AGENT_GITCONFIG" credential.useHttpPath "$use_http_path"
+        chown agent:agent "$AGENT_GITCONFIG"
+    fi
+}
 
 # ── SSL cert generation (first-startup only) ──────────────────────────────────
 # Generate a self-signed MITM CA at first boot so the private key is never
@@ -158,6 +196,12 @@ if [[ ! -f "$SCHEDULER_CRONTAB" ]]; then
     chown agent:agent "$SCHEDULER_CRONTAB"
     log "Created empty scheduler crontab at $SCHEDULER_CRONTAB"
 fi
+
+# ── git credentials ──────────────────────────────────────────────────────────
+# A root-mediated helper is not meaningfully secret from the agent: anything
+# the agent can use via git, it can also trigger directly. For HTTPS auth we
+# therefore support explicit startup injection into git's standard store.
+configure_git_credentials
 
 # ── dnsmasq config ───────────────────────────────────────────────────────────
 if [[ "$NETWORK_MODE" == "allowlist" ]]; then
