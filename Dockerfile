@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # install UV to a system-wide location so all users (including agent) can use it
 ENV UV_PYTHON_BIN_DIR=/usr/local/bin/
+ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 RUN uv python install 3.13 --default && which python3
 
