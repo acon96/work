@@ -11,6 +11,7 @@
  */
 
 import type { ExtensionAPI, ProviderModelConfig, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { ModelRegistry, AuthStorage } from "@earendil-works/pi-coding-agent";
 import { readFile } from "node:fs/promises";
 
 // ── Config types ──────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ async function loadConfig(): Promise<LlamaSwapConfig> {
   return {};
 }
 
-function mapModel(raw: any, ctx: ExtensionContext, fm: FieldMapping): ProviderModelConfig {
+function mapModel(raw: any, modelRegistry: ModelRegistry, fm: FieldMapping): ProviderModelConfig {
   const rawInput = dig(raw, fm.input);
   const input: Array<"text" | "image"> = Array.isArray(rawInput)
     ? rawInput.filter((v: string) => v === "text" || v === "image")
@@ -78,7 +79,7 @@ function mapModel(raw: any, ctx: ExtensionContext, fm: FieldMapping): ProviderMo
   if (isPeer && modelId.split("/").length === 2) {
     // attempt to find the peer's ID in our existing model registry and apply those settings
     const [provider, modelName] = modelId.split("/");
-    const foundModel = ctx.modelRegistry.find(provider, modelName);
+    const foundModel = modelRegistry.find(provider, modelName);
 
     if (foundModel) {
       return {
@@ -130,28 +131,27 @@ export default async function llamaSwapExtension(pi: ExtensionAPI) {
     return;
   }
 
-  pi.on("resources_discover", async (event, ctx) => {
-    const resolvedBaseUrl = envBaseUrl ?? baseUrl!;
-    const resolvedApiKey = envApiKey ?? apiKey!;
+  const resolvedBaseUrl = envBaseUrl ?? baseUrl!;
+  const resolvedApiKey = envApiKey ?? apiKey!;
 
-    try {
-      const res = await fetch(`${resolvedBaseUrl}/v1/models`);
-      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  try {
+    const res = await fetch(`${resolvedBaseUrl}/v1/models`);
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
-      const { data } = (await res.json()) as { data: any[] };
-      const models = (data ?? []).map((m) => mapModel(m, ctx, fieldMapping));
+    const customRegistry = ModelRegistry.create(AuthStorage.create("/home/agent/.pi/agent/auth.json"), "/home/agent/.pi/agent/models.json");
+    const { data } = (await res.json()) as { data: any[] };
+    const models = (data ?? []).map((m) => mapModel(m, customRegistry, fieldMapping));
 
-      pi.registerProvider("llama-swap", {
-        name:    "llama-swap",
-        baseUrl: `${resolvedBaseUrl}/v1`,
-        apiKey:  resolvedApiKey,
-        api:     "openai-completions",
-        models,
-      });
+    pi.registerProvider("llama-swap", {
+      name:    "llama-swap",
+      baseUrl: `${resolvedBaseUrl}/v1`,
+      apiKey:  resolvedApiKey,
+      api:     "openai-completions",
+      models,
+    });
 
-      console.log(`[llama-swap] Registered ${models.length} model(s) from ${resolvedBaseUrl}`);
-    } catch (err) {
-      console.error(`[llama-swap] Failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  });
+    console.log(`[llama-swap] Registered ${models.length} model(s) from ${resolvedBaseUrl}`);
+  } catch (err) {
+    console.error(`[llama-swap] Failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 }
