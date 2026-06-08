@@ -138,9 +138,8 @@ export default async function llamaSwapExtension(pi: ExtensionAPI) {
     const res = await fetch(`${resolvedBaseUrl}/v1/models`);
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 
-    const customRegistry = ModelRegistry.create(AuthStorage.create("/home/agent/.pi/agent/auth.json"), "/home/agent/.pi/agent/models.json");
     const { data } = (await res.json()) as { data: any[] };
-    const models = (data ?? []).map((m) => mapModel(m, customRegistry, fieldMapping));
+    const models = (data ?? []).map((m) => mapModel(m, fieldMapping));
 
     pi.registerProvider("llama-swap", {
       name:    "llama-swap",
