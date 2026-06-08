@@ -10,8 +10,8 @@
  * the top-level "llama-swap" key and ignores "providers" entirely.
  */
 
-import type { ExtensionAPI, ProviderModelConfig, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ModelRegistry, AuthStorage } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { getModel, KnownProvider } from "@earendil-works/pi-ai";
 import { readFile } from "node:fs/promises";
 
 // ── Config types ──────────────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ async function loadConfig(): Promise<LlamaSwapConfig> {
   return {};
 }
 
-function mapModel(raw: any, modelRegistry: ModelRegistry, fm: FieldMapping): ProviderModelConfig {
+function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
   const rawInput = dig(raw, fm.input);
   const input: Array<"text" | "image"> = Array.isArray(rawInput)
     ? rawInput.filter((v: string) => v === "text" || v === "image")
@@ -79,7 +79,7 @@ function mapModel(raw: any, modelRegistry: ModelRegistry, fm: FieldMapping): Pro
   if (isPeer && modelId.split("/").length === 2) {
     // attempt to find the peer's ID in our existing model registry and apply those settings
     const [provider, modelName] = modelId.split("/");
-    const foundModel = modelRegistry.find(provider, modelName);
+    const foundModel = getModel(provider as KnownProvider, modelName);
 
     if (foundModel) {
       return {
