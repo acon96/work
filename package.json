@@ -19,12 +19,10 @@
     ]
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "0.78.0",
-    "@jmfederico/pi-web": "1.202606.1",
+    "@earendil-works/pi-coding-agent": "0.79.10",
+    "@jmfederico/pi-web": "1.202606.4",
     "pi-searxng": "1.0.4",
-    "pi-drawio": "0.1.0",
-    "pi-wiki": "2.0.0",
-    "pi-lens": "3.8.44",
-    "pi-subagents": "0.24.2"
+    "pi-lens": "3.8.53",
+    "pi-subagents": "0.30.0"
   }
 }
