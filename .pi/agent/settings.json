@@ -10,7 +10,6 @@
     "enabled": true,
     "maxRetries": 3
   },
-  "sessionDir": "/home/agent/.pi/sessions",
   "extensions": [
     "/home/agent/.pi/extensions"
   ],
