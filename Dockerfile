@@ -42,6 +42,7 @@ ENV UV_PYTHON_BIN_DIR=/usr/local/bin/
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 RUN uv python install 3.13 --default && which python3
+RUN uv python install 3.14
 
 # Install supercronic (cron for containers)
 ARG SUPERCRONIC_VERSION=0.2.33
