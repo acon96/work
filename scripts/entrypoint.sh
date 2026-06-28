@@ -16,6 +16,10 @@ AGENT_GITCONFIG="$AGENT_HOME/.gitconfig"
 AGENT_GIT_CREDENTIALS="$AGENT_HOME/.git-credentials"
 NETWORK_MODE_SCRIPT="/usr/local/bin/network-mode"
 
+export PI_WEB_DATA_DIR="${PI_WEB_DATA_DIR:-$AGENT_HOME/.pi/web}"
+# Container-specific opinion: keep live Unix socket on local tmpfs-backed path.
+export PI_WEB_SESSIOND_SOCKET="/tmp/pi-web/sessiond.sock"
+
 log() { echo "[entrypoint] $*"; }
 
 urlencode() {
@@ -217,18 +221,22 @@ fi
 # Note: on bind mounts (e.g. macOS Docker Desktop), rm may fail if the socket
 # is owned by root — ignore the error since the daemon handles stale sockets.
 log "Preparing pi-web data directory"
-mkdir -p "$AGENT_HOME/.pi/web"
-chown agent:agent "$AGENT_HOME/.pi/web"
-rm -f "$AGENT_HOME/.pi/web/sessiond.sock" 2>/dev/null || true
+mkdir -p "$PI_WEB_DATA_DIR"
+chown agent:agent "$PI_WEB_DATA_DIR"
+
+SESSIOND_SOCKET_DIR="$(dirname "$PI_WEB_SESSIOND_SOCKET")"
+mkdir -p "$SESSIOND_SOCKET_DIR"
+chown agent:agent "$SESSIOND_SOCKET_DIR"
+rm -f "$PI_WEB_SESSIOND_SOCKET" 2>/dev/null || true
 
 # Run as agent directly (not inside sh -c) so SESSIOND_PID is the daemon PID.
 log "Starting pi-web session daemon"
-gosu agent env PI_WEB_DATA_DIR="$AGENT_HOME/.pi/web" pi-web-sessiond &
+gosu agent env PI_WEB_DATA_DIR="$PI_WEB_DATA_DIR" PI_WEB_SESSIOND_SOCKET="$PI_WEB_SESSIOND_SOCKET" pi-web-sessiond &
 SESSIOND_PID=$!
 
 # Wait until the session daemon socket is ready.
 for i in $(seq 1 20); do
-    if [ -S "$AGENT_HOME/.pi/web/sessiond.sock" ]; then
+    if [ -S "$PI_WEB_SESSIOND_SOCKET" ]; then
         log "Pi-web session daemon is ready."
         break
     fi

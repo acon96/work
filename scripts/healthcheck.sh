@@ -3,6 +3,8 @@
 set -euo pipefail
 
 EXIT_CODE=0
+PI_WEB_DATA_DIR="${PI_WEB_DATA_DIR:-/home/agent/.pi/web}"
+PI_WEB_SESSIOND_SOCKET="${PI_WEB_SESSIOND_SOCKET:-/tmp/pi-web/sessiond.sock}"
 
 # Check squid (proxy) - port 3128 should be listening
 if ! ss -tlnp 2>/dev/null | grep -q ':3128 '; then
@@ -17,8 +19,8 @@ if ! ss -ulnp 2>/dev/null | grep -q ':53 '; then
 fi
 
 # Check pi-web session daemon - socket should exist
-if [ ! -S /home/agent/.pi/web/sessiond.sock ]; then
-    echo "UNHEALTHY: pi-web session daemon socket not found"
+if [ ! -S "$PI_WEB_SESSIOND_SOCKET" ]; then
+    echo "UNHEALTHY: pi-web session daemon socket not found at $PI_WEB_SESSIOND_SOCKET"
     EXIT_CODE=1
 fi
 
