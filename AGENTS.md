@@ -23,9 +23,11 @@ work/
 │   └── searxng-settings.yml     SearXNG search engine configuration
 ├── scripts/
 │   ├── entrypoint.sh            Container start-up script
+│   ├── network-mode.sh          Runtime network mode switcher (reloads dnsmasq/squid)
 │   ├── docker-run.sh            Convenience host launcher
 │   └── squid-url-rewrite.py     URL rewrite helper (strips query strings, Mode B)
 ├── extensions/
+│   ├── network-mode.ts          pi extension: runtime network mode status/switch tool + /network
 │   ├── llama-swap.ts            pi extension: runtime model swapping (llama.cpp)
 │   ├── tools.ts                 pi extension: runtime tool toggling
 │   ├── scheduler.ts             pi extension: scheduled tasks via supercronic
@@ -152,6 +154,9 @@ Alternatively, pass the allowlist inline via the `SUDO_ALLOWLIST` env var (newli
 ### Switching network modes
 
 Set `NETWORK_MODE=open-get` via environment variable (docker-compose or docker run `-e`).
+
+For runtime switching without container restart, use the `network_mode` tool or `/network` command.
+These call `/usr/local/bin/network-mode` through sudo (must be allowlisted in `config/sudo-allowlist.txt`).
 
 ### Enabling URL rewriting (Mode B)
 

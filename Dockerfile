@@ -88,9 +88,10 @@ COPY config/dnsmasq-open.conf      /etc/work/dnsmasq-open.conf
 COPY config/proxy-allowlist.txt    /config/proxy-allowlist.txt
 COPY config/agent.gitconfig        /home/agent/.gitconfig
 COPY scripts/squid-url-rewrite.py  /usr/local/bin/squid-url-rewrite
+COPY scripts/network-mode.sh       /usr/local/bin/network-mode
 COPY scripts/entrypoint.sh         /entrypoint.sh
 COPY scripts/healthcheck.sh        /usr/local/bin/healthcheck
-RUN chmod +x /entrypoint.sh /usr/local/bin/squid-url-rewrite /usr/local/bin/healthcheck
+RUN chmod +x /entrypoint.sh /usr/local/bin/squid-url-rewrite /usr/local/bin/network-mode /usr/local/bin/healthcheck
 
 # ── workspace ─────────────────────────────────────────────────────────────────
 RUN mkdir -p /workspace && chown agent:agent /workspace

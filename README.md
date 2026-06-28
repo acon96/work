@@ -232,6 +232,7 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 
 | Extension       | File                       | Purpose                                                                                                          |
 |-----------------|----------------------------|------------------------------------------------------------------------------------------------------------------|
+| `pi-network-mode` | `extensions/network-mode.ts` | `network_mode` tool + `/network` command for runtime sandbox mode switching (`allowlist` / `open-get`)         |
 | `pi-tools`      | `extensions/tools.ts`      | `/tools` command; runtime enable/disable of individual tools; persists selection                                 |
 | `pi-scheduler`  | `extensions/scheduler.ts`  | `/task` command and tool; manage scheduled tasks via supercronic (cron for containers); persists to crontab file |
 | `pi-todo`       | `extensions/todo.ts`       | `todo` tool; persistent todo list (add / complete / delete / list)                                               |
@@ -255,6 +256,8 @@ Custom commands provided by local extensions:
 
 | Command  | Extension      | Usage                                       | Description                                                    |
 |----------|----------------|---------------------------------------------|----------------------------------------------------------------|
+| `/network` | `pi-network-mode` | `/network state`                         | Show the current runtime network mode and active squid/dnsmasq configs |
+|          |                | `/network switch <allowlist|open-get>`      | Switch network mode at runtime without restarting the container |
 | `/tools` | `pi-tools`     | `/tools state`                              | Show all tools and their enabled/disabled state                |
 |          |                | `/tools toggle <name>`                      | Toggle a specific tool on or off                               |
 |          |                | `/tools set <name1,name2,...>`              | Enable only the specified tools, disable all others            |
@@ -369,6 +372,23 @@ Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) an
 - Query strings are removed from all URLs before forwarding (optional, enabled via `URL_REWRITE_ENABLED=true`).
 - dnsmasq forwards all queries upstream.
 - Designed for read-only browsing/research with reduced header leakage.
+
+### Runtime mode switching
+
+The sandbox mode can be changed while the container is running:
+
+- Tool: `network_mode`
+  - `{"action":"status"}`
+  - `{"action":"set","mode":"allowlist"}`
+  - `{"action":"set","mode":"open-get"}`
+- Command: `/network state` and `/network switch <allowlist|open-get>`
+
+Implementation notes:
+
+- Privileged changes are delegated to `/usr/local/bin/network-mode` via sudo (explicitly allowlisted in `config/sudo-allowlist.txt`).
+- The script re-renders runtime dnsmasq/squid configs, validates them, restarts dnsmasq, and reconfigures squid in place.
+- Current mode is persisted to `/run/work/network-mode` and `/run/work/network-state.json`.
+- The `system-prompt` extension reads runtime mode state on each `before_agent_start`, so prompt injection always reflects the active mode.
 
 ---
 

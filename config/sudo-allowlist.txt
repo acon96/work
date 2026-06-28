@@ -7,5 +7,13 @@
 # Example:
 #   apt-get update
 #   apt-get install -y curl
+#   /usr/local/bin/network-mode status --json
+#   /usr/local/bin/network-mode set allowlist
+#   /usr/local/bin/network-mode set open-get
 #
-# This file is EMPTY by default — add entries only as needed.
+# This file includes entries for the default tools to function
+# Add additional entries as needed
+
+/usr/local/bin/network-mode status --json
+/usr/local/bin/network-mode set allowlist
+/usr/local/bin/network-mode set open-get
