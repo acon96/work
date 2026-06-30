@@ -83,20 +83,20 @@ Once you have gathered context, call the `superagent_plan` tool with:
     "provider": "<provider from step 2>",
     "model": "<model from step 2>",
     "userQuery": "<original user request>",
-    "readToolCallIds": ["<id-from-read-1>", "<id-from-read-2>", ...],
-    "bashToolCallIds": ["<id-from-bash-1>", "<id-from-bash-2>", ...],
-    "additionalContext": "<optional: any constraints, preferences, or requirements>"
+    "planContextToolCallIds": ["<id-from-read-1>", "<id-from-read-2>", "<id-from-bash-1>", ...],
+    "fileContents": ["<path-to-file-1>", "<path-to-file-2>"],
+    "additionalContext": "<optional: any constraints, preferences, or requirements>",
+    "maxContextBytes": 100000
   }
 }
 ```
 
 **Important:**
-- Use `readToolCallIds` to reference your previous `read` tool calls
-- Use `bashToolCallIds` to reference your previous `bash` tool calls
+- Use `planContextToolCallIds` to reference results from ANY previous tool calls (`read`, `bash`, `grep`, `find`, etc.)
+- Use `fileContents` for file paths that haven't been read yet (the tool will read them)
 - Do NOT paste large file contents or command outputs directly
 - The tool will extract the results from your previous tool calls automatically
-
-**Alternative:** If you have small amounts of context, you can use `fileContents` and `commandOutputs` arrays directly instead of tool call IDs.
+- `maxContextBytes` controls the context budget (default: 100000, min: 10000, max: 500000)
 
 ### 5. Execute the Plan
 
@@ -142,8 +142,7 @@ superagent_plan({
   provider: "anthropic",
   model: "claude-sonnet-4-20250514",
   userQuery: "Refactor authentication to support OAuth2 with GitHub and Google providers",
-  readToolCallIds: ["<call-1>", "<call-2>", "<call-3>", "<call-4>"],
-  bashToolCallIds: ["<call-5>", "<call-6>", "<call-7>"],
+  planContextToolCallIds: ["<call-1>", "<call-2>", "<call-3>", "<call-4>", "<call-5>", "<call-6>", "<call-7>"],
   additionalContext: "Using Express.js with TypeScript. Current auth is username/password with bcrypt. Database is PostgreSQL via Prisma."
 })
 ```

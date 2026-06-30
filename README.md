@@ -97,6 +97,7 @@ The system starts three processes inside the container:
 - **dnsmasq** — DNS filtering
 - **squid** — HTTP/HTTPS proxy  
 - **Pi Web** — Web UI and session daemon (ports 8504)
+- **Supercronic** — Cron scheduler for background tasks
 
 Open the Pi Web UI at **http://localhost:8504** and SearXNG at **http://localhost:8080**.
 
@@ -140,7 +141,7 @@ Pi Web provides a browser-based interface for interacting with the agent:
 2. **Workspaces** — For git repos, create worktrees; for non-git folders, use the project directly
 3. **Sessions** — Start chat sessions with Pi Coding Agent inside a workspace
 
-All chat history and session data persists in the `pi-data` Docker volume at `~/.pi/sessions`.
+All chat history and session data persists in the `.pi/sessions` directory on the host (bind-mounted into the container).
 
 Use `/tools state` to see available tools, `/tools toggle <name>` to enable/disable tools, and other extension commands as needed.
 
@@ -191,13 +192,12 @@ If a service fails its healthcheck after 3 retries, Docker will restart the cont
 | Variable              | Default               | Description                                                                             |
 |-----------------------|-----------------------|-----------------------------------------------------------------------------------------|
 | `NETWORK_MODE`        | `allowlist`           | `allowlist` — strict outbound control; `open-get` — all domains but GET/HEAD only       |
-| `WORKSPACE_DIR`       | `./workspace`         | Host path mounted as `/workspace`                                                       |
-| `CONFIG_DIR`          | `./config`            | Host path mounted as `/config`                                                          |
+| `WORKSPACE_DIR`       | `./agent-workspace`   | Host path mounted as `/workspace`                                                       |
 | `PI_WEB_PORT`         | `8504`                | Host port for the pi web UI                                                             |
 | `SEARXNG_URL`         | `http://searxng:8080` | SearXNG endpoint (internal Docker URL); set to a custom URL for external SearXNG        |
 | `URL_REWRITE_ENABLED` | `false`               | Enable optional URL query-string stripping in Mode B (uses `squid-url-rewrite.py`)      |
-| `PROXY_ALLOWLIST`     | —                     | Newline-separated domains; overrides `config/proxy-allowlist.txt` at runtime            |
-| `SUDO_ALLOWLIST`      | —                     | Newline-separated commands (without sudo prefix); overrides `config/sudo-allowlist.txt` at runtime       |
+| `PROXY_ALLOWLIST`     | —                     | Comma-separated domains; appended to `config/proxy-allowlist.txt` at runtime            |
+| `SUDO_ALLOWLIST`      | —                     | Comma-separated commands (without sudo prefix); appended to `config/sudo-allowlist.txt` at runtime      |
 | `LLAMA_SWAP_URL`      | —                     | External llama-swap URL for dynamic model discovery (auto-adds host to proxy allowlist) |
 | `GIT_CREDENTIAL_URLS` | —                     | Newline-separated full `.git-credentials` entries written at startup                      |
 | `GIT_CREDENTIAL_PROTOCOL` | `https`          | Protocol used when assembling a single git credential entry                               |
@@ -222,7 +222,11 @@ SearXNG configuration file.  Defines enabled search engines, safe-search level, 
 
 ### config/llama-swap.yml
 
-llama-swap configuration file.  Empty by default — llama-swap uses its own defaults.  Only needed when running llama-swap via `--profile llama-swap`.
+llama-swap configuration file.  Defines health check timeouts, log levels, server macros, and context-length shortcuts.  Mounted read-only into the llama-swap container when running via `--profile llama-swap`.
+
+### config/agent.gitconfig
+
+Default git configuration for the `agent` user.  Copied into the container at `/home/agent/.gitconfig`.  Git credential settings are applied at startup via the `GIT_CREDENTIAL_*` environment variables.
 
 ---
 
@@ -230,44 +234,46 @@ llama-swap configuration file.  Empty by default — llama-swap uses its own def
 
 ### Local extensions (bundled)
 
-| Extension       | File                       | Purpose                                                                                                          |
-|-----------------|----------------------------|------------------------------------------------------------------------------------------------------------------|
-| `pi-network-mode` | `extensions/network-mode.ts` | `network_mode` tool + `/network` command for runtime sandbox mode switching (`allowlist` / `open-get`)         |
-| `pi-tools`      | `extensions/tools.ts`      | `/tools` command; runtime enable/disable of individual tools; persists selection                                 |
-| `pi-scheduler`  | `extensions/scheduler.ts`  | `/task` command and tool; manage scheduled tasks via supercronic (cron for containers); persists to crontab file |
-| `pi-todo`       | `extensions/todo.ts`       | `todo` tool; persistent todo list (add / complete / delete / list)                                               |
-| `pi-llama-swap` | `extensions/llama-swap.ts` | Llama-swap dynamic model discovery; enables `/swap` command for runtime model switching                          |
+| Extension        | File                         | Purpose                                                                                                          |
+|------------------|------------------------------|------------------------------------------------------------------------------------------------------------------|
+| `pi-system-prompt` | `extensions/system-prompt.ts` | Injects sandbox environment details (network mode, proxy behaviour, sudo restrictions) into the agent system prompt |
+| `pi-network-mode`  | `extensions/network-mode.ts`  | `network_mode` tool + `/network` command for runtime sandbox mode switching (`allowlist` / `open-get`)            |
+| `pi-tools`         | `extensions/tools.ts`         | `/tools` command; runtime enable/disable of individual tools; persists selection                                  |
+| `pi-scheduler`     | `extensions/scheduler.ts`     | `/task` command and tool; manage scheduled tasks via supercronic (cron for containers); persists to crontab file  |
+| `pi-todo`          | `extensions/todo.ts`          | `todo` tool; persistent todo list (add / complete / delete / list)                                               |
+| `pi-llama-swap`    | `extensions/llama-swap.ts`    | Llama-swap dynamic model discovery; field mapping from llama-swap metadata to pi model config                    |
+| `pi-superagent`    | `extensions/superagent.ts`    | Weak-model-gathers, strong-model-plans hybrid; single strong-model call for strategic planning                   |
 
 ### Off-the-shelf extensions (loaded via `package.json` → `pi install`)
 
-| Extension            | Pinned Version | Purpose                                 |
-|----------------------|----------------|-----------------------------------------|
-| `@jmfederico/pi-web` | `1.202606.0`   | Web browsing extension                  |
-| `pi-searxng`         | `1.0.4`        | SearXNG search integration              |
-| `pi-drawio`          | `0.1.0`        | Draw.io diagram editor                  |
-| `pi-wiki`            | `2.0.0`        | Wikipedia search                        |
-| `pi-lens`            | `3.8.44`       | Code lens / language server integration |
-| `pi-subagents`       | `0.24.2`       | Spawn sub-agent sessions                |
-| `pi-lama-swap`       | `0.1.0`        | Llama-swap model discovery integration  |
+| Extension                        | Pinned Version | Purpose                                         |
+|----------------------------------|----------------|-------------------------------------------------|
+| `@earendil-works/pi-coding-agent` | `0.80.2`       | Pi Coding Agent core (SDK + runtime)            |
+| `@jmfederico/pi-web`             | `1.202606.7`   | Web UI and session daemon                       |
+| `@amartinr/pi-searxng`           | `1.0.3`        | SearXNG search integration                      |
+| `pi-lens`                        | `3.8.61`       | Code lens / language server integration         |
+| `pi-subagents`                   | `0.31.0`       | Spawn sub-agent sessions                        |
 
 ### Commands
 
 Custom commands provided by local extensions:
 
-| Command  | Extension      | Usage                                       | Description                                                    |
-|----------|----------------|---------------------------------------------|----------------------------------------------------------------|
-| `/network` | `pi-network-mode` | `/network state`                         | Show the current runtime network mode and active squid/dnsmasq configs |
-|          |                | `/network switch <allowlist|open-get>`      | Switch network mode at runtime without restarting the container |
-| `/tools` | `pi-tools`     | `/tools state`                              | Show all tools and their enabled/disabled state                |
-|          |                | `/tools toggle <name>`                      | Toggle a specific tool on or off                               |
-|          |                | `/tools set <name1,name2,...>`              | Enable only the specified tools, disable all others            |
-| `/task`  | `pi-scheduler` | `/task schedule <name> <prompt> [interval]` | Create a scheduled task (interval: 5m, 2h, 1d, or cron syntax) |
-|          |                | `/task list`                                | Show all scheduled tasks                                       |
-|          |                | `/task delete <name>`                       | Remove a scheduled task                                        |
+| Command       | Extension         | Usage                                       | Description                                                    |
+|---------------|-------------------|---------------------------------------------|----------------------------------------------------------------|
+| `/network`    | `pi-network-mode` | `/network state`                            | Show the current runtime network mode and active squid/dnsmasq configs |
+|               |                   | `/network switch <allowlist|open-get>`      | Switch network mode at runtime without restarting the container |
+| `/tools`      | `pi-tools`        | `/tools state`                              | Show all tools and their enabled/disabled state                |
+|               |                   | `/tools toggle <name>`                      | Toggle a specific tool on or off                               |
+|               |                   | `/tools set <name1,name2,...>`              | Enable only the specified tools, disable all others            |
+| `/task`       | `pi-scheduler`    | `/task schedule <name> <prompt> [interval]` | Create a scheduled task (interval: 5m, 2h, 1d, or cron syntax) |
+|               |                   | `/task list`                                | Show all scheduled tasks                                       |
+|               |                   | `/task delete <name>`                       | Remove a scheduled task                                        |
+| `/superagent` | `pi-superagent`   | `/superagent models`                        | List all available models for planning                         |
+|               |                   | `/superagent providers`                     | List configured providers and auth status                      |
 
 ### Session persistence
 
-Session data is stored in `.pi/agents/sessions` (configured via `.pi/settings.json` → `sessionDir`).  The directory is bind-mounted from the host into the container so it persists across container rebuilds.
+Session data is stored in `.pi/sessions` on the host, bind-mounted to `/home/agent/.pi/agent/sessions` inside the container. Global pi settings live at `.pi/agent/settings.json` (bind-mounted to `/home/agent/.pi/agent/settings.json`). Pi Web state lives at `.pi/web` (bind-mounted to `/home/agent/.pi/web`). All three directories persist across container rebuilds via bind mounts.
 
 ### Scheduler
 
@@ -349,10 +355,10 @@ The crontab file can also be inspected directly at `/workspace/.scheduler.cronta
 
 Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) and copied into the container at `~/.pi/agent/skills/` for global discovery.
 
-| Skill             | Location                  | Purpose                                                                      |
-|-------------------|---------------------------|------------------------------------------------------------------------------|
-| `notify`          | `skills/notify/`          | Send push notifications via ntfy.sh for background-triggered events          |
-| `scheduled-tasks` | `skills/scheduled-tasks/` | "explainer" on how to properly use the `scheduler.ts` extension's toolset    |
+| Skill            | Location               | Purpose                                                                        |
+|------------------|------------------------|--------------------------------------------------------------------------------|
+| `notify`         | `skills/notify/`       | Send push notifications via ntfy.sh for background-triggered events            |
+| `superagent`     | `skills/superagent/`   | Guide for invoking the superagent planning workflow with strong models         |
 
 ---
 

@@ -9,30 +9,40 @@ This document is for AI agents (and humans) doing further development on this re
 ```
 work/
 ├── Dockerfile                   Main container image (Node 24 LTS)
-├── docker-compose.yml           Compose config (work + searxng)
+├── docker-compose.yml           Compose config (work + searxng + optional llama-swap)
 ├── package.json                 Pinned pi-extensions dependencies
 ├── .pi/
-│   └── settings.json            pi sessionDir + packages + extensions
+│   ├── agent/
+│   │   ├── settings.json        pi global settings (default provider, extensions, packages)
+│   │   └── models.json          pi models config (llama-swap field mapping)
+│   ├── sessions/                Persistent session data (bind-mounted)
+│   └── web/                     Pi Web state (bind-mounted)
 ├── config/
+│   ├── agent.gitconfig          Default git config for agent user
 │   ├── proxy-allowlist.txt      User-editable proxy domain allowlist (Mode A)
 │   ├── sudo-allowlist.txt       User-editable sudo command allowlist
 │   ├── squid-allowlist.conf     Squid config rendered for Mode A
 │   ├── squid-open-get.conf      Squid config rendered for Mode B
 │   ├── dnsmasq-allowlist.conf   dnsmasq config for Mode A (default-deny)
 │   ├── dnsmasq-open.conf        dnsmasq config for Mode B (permissive)
-│   └── searxng-settings.yml     SearXNG search engine configuration
+│   ├── searxng-settings.yml     SearXNG search engine configuration
+│   └── llama-swap.yml           llama-swap service configuration
 ├── scripts/
 │   ├── entrypoint.sh            Container start-up script
 │   ├── network-mode.sh          Runtime network mode switcher (reloads dnsmasq/squid)
-│   ├── docker-run.sh            Convenience host launcher
+│   ├── healthcheck.sh           Docker healthcheck script
 │   └── squid-url-rewrite.py     URL rewrite helper (strips query strings, Mode B)
 ├── extensions/
+│   ├── system-prompt.ts         pi extension: injects sandbox env details into system prompt
 │   ├── network-mode.ts          pi extension: runtime network mode status/switch tool + /network
-│   ├── llama-swap.ts            pi extension: runtime model swapping (llama.cpp)
+│   ├── llama-swap.ts            pi extension: llama-swap dynamic model discovery + field mapping
 │   ├── tools.ts                 pi extension: runtime tool toggling
 │   ├── scheduler.ts             pi extension: scheduled tasks via supercronic
 │   ├── todo.ts                  pi extension: persistent todo list
 │   └── superagent.ts            pi extension: weak-model-gathers, strong-model-plans hybrid
+├── skills/
+│   ├── notify/                  pi skill: ntfy.sh push notifications
+│   └── superagent/              pi skill: superagent planning workflow guide
 └── .github/workflows/docker.yml CI/CD: build & publish image on push to main
 ```
 
@@ -45,7 +55,7 @@ work/
 3. **Sudo commands are enforced by dynamically-generated `/etc/sudoers`** — at startup, the entrypoint converts `/config/sudo-allowlist.txt` into sudoers Cmnd_Alias directives, validates it with `visudo -c`, then attempts `chattr +i` to make it immutable (requires `CAP_LINUX_IMMUTABLE`). The file is already protected by Unix permissions (root:root 0440), so the immutable flag is defense-in-depth.
 4. **Mode A (allowlist)** is the secure default. Mode B (open-GET) trades security for convenience — never make Mode B the default.
 5. **The squid MITM CA private key is generated at first startup** and never exported. Do not add steps that print or persist `/etc/squid/ssl-ca.key`.
-6. **Session data persists via the `pi-data` Docker volume** at `/home/agent/.pi/sessions`. The global settings live at `/home/agent/.pi/agent/settings.json`. Never hardcode sessionDir to a non-persistent path.
+6. **Session data persists via bind mounts** at `/home/agent/.pi/agent/sessions` (from `.pi/sessions`), `/home/agent/.pi/agent/settings.json` (from `.pi/agent/settings.json`), and `/home/agent/.pi/web` (from `.pi/web`). Never hardcode paths to non-persistent locations.
 
 ---
 
@@ -113,10 +123,10 @@ The local model calls the `superagent_plan` tool with:
 - `provider` — provider name (e.g., "anthropic", "openai", "openrouter")
 - `model` — model ID (e.g., "claude-sonnet-4-20250514", "o1", "gpt-4o")
 - `userQuery` — the task that needs planning
-- `filePaths` — array of relevant file paths
-- `bashCommands` — array of diagnostic commands to run
+- `planContextToolCallIds` — array of tool call IDs from previous `read`/`bash`/`grep`/`find` calls to include as context
+- `fileContents` — array of file paths to read and include as context (alternative to tool call IDs)
 - `additionalContext` — optional extra context
-- `maxContextBytes` — optional context budget (default: 100000)
+- `maxContextBytes` — optional context budget (default: 100000, min: 10000, max: 500000)
 
 The strong model receives all gathered context in a single prompt and returns a structured plan. The local model then executes the plan step-by-step.
 
@@ -140,7 +150,7 @@ See `extensions/pi-superagent.README.md` for full documentation.
 
 Append to `config/proxy-allowlist.txt`. The entry must be a bare domain (e.g. `pypi.org`); squid's `dstdomain` ACL automatically matches subdomains.  The entrypoint also appends a `server=/<domain>/8.8.8.8` dnsmasq directive so DNS resolves correctly in Mode A.
 
-Alternatively, pass the allowlist inline via the `PROXY_ALLOWLIST` env var (newline-separated domains).
+Alternatively, pass the allowlist inline via the `PROXY_ALLOWLIST` env var (comma-separated domains).
 
 ### Adding an allowlisted sudo command
 
@@ -149,7 +159,7 @@ Append the command (without `sudo` prefix) to `config/sudo-allowlist.txt`, e.g.:
 apt-get install -y curl
 ```
 
-Alternatively, pass the allowlist inline via the `SUDO_ALLOWLIST` env var (newline-separated commands).
+Alternatively, pass the allowlist inline via the `SUDO_ALLOWLIST` env var (comma-separated commands).
 
 ### Switching network modes
 
@@ -170,12 +180,20 @@ Set `URL_REWRITE_ENABLED=true` via environment variable. This appends `url_rewri
 
 All off-the-shelf pi extensions are declared as `dependencies` with pinned versions.  The `pi` key declares local extension paths for the gallery.
 
-### .pi/settings.json
+### .pi/agent/settings.json
 
-This file is copied into the container and bootstrapped for the `agent` user at runtime.  It configures:
-- `sessionDir`: where session files are stored (persisted via Docker volume)
-- `extensions`: paths to local extension directories
+This file is bind-mounted into the container at `/home/agent/.pi/agent/settings.json`.  It configures:
+- `defaultProvider` / `defaultModel`: default model for sessions
+- `compaction`: context compaction settings (reserve tokens, keep recent tokens)
+- `retry`: retry settings for failed requests
+- `extensions`: paths to local extension directories (e.g., `/home/agent/.pi/extensions`)
 - `packages`: npm packages to load resources from (pinned versions)
+
+### .pi/agent/models.json
+
+This file is bind-mounted into the container at `/home/agent/.pi/agent/models.json`.  It configures:
+- `providers`: custom provider configurations
+- `llama-swap`: llama-swap base URL, API key, and field mapping from llama-swap metadata to pi model properties
 
 ### SearXNG
 
@@ -243,7 +261,7 @@ The image is tagged with:
 - [ ] todo extension persists across session restart
 - [ ] pi-superagent extension loads and `/superagent models` lists available models
 - [ ] SearXNG container starts and responds on port 8080
-- [ ] `pi-data` volume persists session data across container rebuilds
+- [ ] `.pi/sessions` bind mount persists session data across container rebuilds
 - [ ] Pi Web web server starts and responds on port 8504
 - [ ] Healthcheck passes for work container (squid, dnsmasq, pi-web, supercronic)
 - [ ] Healthcheck passes for searxng container
