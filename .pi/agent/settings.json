@@ -16,9 +16,8 @@
   "packages": [
     "/app/node_modules/@jmfederico/pi-web",
     "/app/node_modules/pi-searxng",
-    "/app/node_modules/pi-drawio",
-    "/app/node_modules/pi-wiki",
     "/app/node_modules/pi-lens",
-    "/app/node_modules/pi-subagents"
+    "/app/node_modules/pi-subagents",
+    "/app/node_modules/pi-smart-fetch"
   ]
 }
