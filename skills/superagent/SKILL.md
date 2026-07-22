@@ -1,13 +1,8 @@
+---
+name: superagent
+description: Use this skill when the user requests strategic planning, architectural decisions, or complex reasoning that requires a stronger model's judgment.
+---
 # Superagent Planning Skill
-
-Use this skill when the user requests strategic planning, architectural decisions, or complex reasoning that requires a stronger model's judgment.
-
-## When to Invoke
-
-- User asks for refactoring strategies or architecture decisions  
-- Task requires complex reasoning about tradeoffs
-- Need to plan a multi-step implementation
-- User specifically mentions planning or asks "how should I..."
 
 ## Workflow
 

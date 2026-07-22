@@ -119,7 +119,6 @@ RUN mkdir -p /home/agent/.pi/agent \
  && mkdir -p /home/agent/.pi/extensions \
  && mkdir -p /home/agent/.pi/agent/skills \
  && cp /app/extensions/*.ts /home/agent/.pi/extensions/ \
- && cp -r /app/skills/* /home/agent/.pi/agent/skills/ \
  && chown -R agent:agent /home/agent/.pi
 
 # add default settings and models config (can be overridden by bind mounts in docker-compose.yml)
