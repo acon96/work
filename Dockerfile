@@ -115,6 +115,7 @@ ENV PATH="/app/node_modules/.bin:${PATH}"
 RUN mkdir -p /home/agent/.pi/agent \
  && mkdir -p /home/agent/.pi/agent/extensions \
  && mkdir -p /home/agent/.pi/agent/skills \
+ && mkdir -p /home/agent/.pi/scheduled \
  && mkdir -p /home/agent/.pi/web \
  && chown -R agent:agent /home/agent/.pi
 
