@@ -19,8 +19,26 @@ NETWORK_MODE_SCRIPT="/usr/local/bin/network-mode"
 export PI_WEB_DATA_DIR="${PI_WEB_DATA_DIR:-$AGENT_HOME/.pi/web}"
 # Container-specific opinion: keep live Unix socket on local tmpfs-backed path.
 export PI_WEB_SESSIOND_SOCKET="/tmp/pi-web/sessiond.sock"
+export SCHEDULER_STATE_DIR="${SCHEDULER_STATE_DIR:-$AGENT_HOME/.pi/scheduled}"
+export SCHEDULER_CRONTAB_PATH="${SCHEDULER_CRONTAB_PATH:-$SCHEDULER_STATE_DIR/scheduler.crontab}"
 
 log() { echo "[entrypoint] $*"; }
+
+safe_chown() {
+    local label="$1"
+    shift
+    if ! chown "$@" 2>/dev/null; then
+        log "Warning: chown failed for ${label} (likely bind-mount ownership restrictions)"
+    fi
+}
+
+safe_chmod() {
+    local label="$1"
+    shift
+    if ! chmod "$@" 2>/dev/null; then
+        log "Warning: chmod failed for ${label} (likely bind-mount permission restrictions)"
+    fi
+}
 
 urlencode() {
     jq -nr --arg value "$1" '$value|@uri'
@@ -193,22 +211,24 @@ cp /etc/resolv.conf /etc/resolv.conf.upstream 2>/dev/null || true
 echo "nameserver 127.0.0.1" > /etc/resolv.conf
 
 # ── scheduler crontab ────────────────────────────────────────────────────────
-# Create empty crontab for scheduler extension if it doesn't exist
-# Store in /workspace so it persists across container restarts
-SCHEDULER_CRONTAB="/workspace/.scheduler.crontab"
+# Create scheduler state under a dedicated persisted pi agent directory.
+# Defaults to /home/agent/.pi/scheduled.
+mkdir -p "$SCHEDULER_STATE_DIR"
+safe_chown "scheduler state dir" -R agent:agent "$SCHEDULER_STATE_DIR"
+
+SCHEDULER_CRONTAB="$SCHEDULER_CRONTAB_PATH"
 if [[ ! -f "$SCHEDULER_CRONTAB" ]]; then
     touch "$SCHEDULER_CRONTAB"
-    chown agent:agent "$SCHEDULER_CRONTAB"
+    safe_chown "scheduler crontab" agent:agent "$SCHEDULER_CRONTAB"
     log "Created empty scheduler crontab at $SCHEDULER_CRONTAB"
 fi
 
-# Scheduler execution history is workspace-scoped so PI WEB can display it using
-# its documented workspace file helper and so it persists with WORKSPACE_DIR.
-SCHEDULER_HISTORY_DIR="/workspace/.pi-web/scheduler"
+# Scheduler execution history is persisted with scheduler state.
+SCHEDULER_HISTORY_DIR="$SCHEDULER_STATE_DIR"
 mkdir -p "$SCHEDULER_HISTORY_DIR/runs"
 touch "$SCHEDULER_HISTORY_DIR/history.jsonl"
-chown -R agent:agent "/workspace/.pi-web"
-chmod 0700 "/workspace/.pi-web" "$SCHEDULER_HISTORY_DIR" "$SCHEDULER_HISTORY_DIR/runs"
+safe_chown "scheduler history directory" -R agent:agent "$SCHEDULER_HISTORY_DIR"
+safe_chmod "scheduler history directories" 0700 "$SCHEDULER_HISTORY_DIR" "$SCHEDULER_HISTORY_DIR/runs"
 
 # ── git credentials ──────────────────────────────────────────────────────────
 # A root-mediated helper is not meaningfully secret from the agent: anything
@@ -230,14 +250,14 @@ fi
 # is owned by root — ignore the error since the daemon handles stale sockets.
 log "Preparing pi-web data directory"
 mkdir -p "$PI_WEB_DATA_DIR"
-chown agent:agent "$PI_WEB_DATA_DIR"
+safe_chown "pi-web data dir" agent:agent "$PI_WEB_DATA_DIR"
 
 # Seed the local browser plugin once. The persistent data directory is the PI WEB
 # discovery location; never overwrite a user-managed plugin on subsequent starts.
 if [[ ! -e "$PI_WEB_DATA_DIR/plugins/scheduler-history" ]]; then
     mkdir -p "$PI_WEB_DATA_DIR/plugins"
     cp -R /app/pi-web-plugins/scheduler-history "$PI_WEB_DATA_DIR/plugins/scheduler-history"
-    chown -R agent:agent "$PI_WEB_DATA_DIR/plugins/scheduler-history"
+    safe_chown "pi-web scheduler plugin" -R agent:agent "$PI_WEB_DATA_DIR/plugins/scheduler-history"
     log "Installed Scheduler History PI WEB plugin"
 fi
 

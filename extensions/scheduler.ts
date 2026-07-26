@@ -2,7 +2,7 @@
  * Scheduler Extension
  *
  * Manages scheduled agent tasks via supercronic (cron for containers).
- * Tasks are stored in /workspace/.scheduler.crontab and executed by supercronic.
+ * Tasks are stored in the persisted scheduler state directory and executed by supercronic.
  *
  * Each task runs `pi -p` in the workspace directory through scheduler-run,
  * which captures durable execution history for each isolated agent session.
@@ -37,8 +37,9 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 // ── constants ─────────────────────────────────────────────────────────────────
-// Store crontab in workspace so it persists across container restarts
-const CRONTAB_PATH = "/workspace/.scheduler.crontab";
+// Store scheduler state under the persisted pi agent directory by default.
+// This can be overridden by the entrypoint via env vars.
+const CRONTAB_PATH = process.env.SCHEDULER_CRONTAB_PATH ?? "/home/agent/.pi/scheduled/scheduler.crontab";
 const LOG_PREFIX = "[scheduler]";
 const MAX_PROMPT_LENGTH = 500; // Characters - keep prompts concise
 
@@ -483,7 +484,7 @@ export default function schedulerExtension(pi: ExtensionAPI) {
     label: "Scheduler Task",
     description:
       "Manage scheduled agent tasks via supercronic. Actions: schedule, list, delete. " +
-      "Tasks run in the workspace directory using `pi -p` and write history under .pi-web/scheduler. " +
+      "Tasks run in the workspace directory using `pi -p` and write history under the persisted scheduler state directory. " +
       "Supports promptFile (via @file syntax), tools allowlist, skills, model selection, and ephemeral sessions.",
     parameters: Type.Object({
       action: Type.String({ description: "schedule|list|delete" }),

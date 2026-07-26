@@ -275,9 +275,11 @@ Custom commands provided by local extensions:
 
 Session data is stored in `.pi/sessions` on the host, bind-mounted to `/home/agent/.pi/agent/sessions` inside the container. Global pi settings live at `.pi/agent/settings.json` (bind-mounted to `/home/agent/.pi/agent/settings.json`). Pi Web state lives at `.pi/web` (bind-mounted to `/home/agent/.pi/web`). All three directories persist across container rebuilds via bind mounts.
 
+Scheduler state is stored separately in `.pi/scheduled` on the host, bind-mounted to `/home/agent/.pi/scheduled`.
+
 ### Scheduler
 
-The scheduler extension uses [supercronic](https://github.com/aptible/supercronic) to manage scheduled agent tasks. Tasks are stored in `/workspace/.scheduler.crontab` and persist across container restarts.
+The scheduler extension uses [supercronic](https://github.com/aptible/supercronic) to manage scheduled agent tasks. Scheduler state defaults to `/home/agent/.pi/scheduled` (intended for a dedicated persistent mount), including the crontab and execution history.
 
 #### Creating scheduled tasks
 
@@ -338,7 +340,7 @@ scheduler_task({
 #### How it works
 
 1. **Command:** Use `/task schedule` for simple tasks, or `scheduler_task` tool for advanced features
-2. **Storage:** Task metadata stored as comments in `/workspace/.scheduler.crontab`
+2. **Storage:** Task metadata stored as comments in `/home/agent/.pi/scheduled/scheduler.crontab`
 3. **Execution:** Supercronic monitors the crontab and invokes a wrapper that runs `pi -p` with configured options at scheduled times
 4. **Isolation:** Each task runs in an isolated agent session
 
@@ -349,17 +351,17 @@ scheduler_task({
 /task delete hourly-check     # Remove a task
 ```
 
-The crontab file can also be inspected directly at `/workspace/.scheduler.crontab` for debugging.
+The crontab file can also be inspected directly at `/home/agent/.pi/scheduled/scheduler.crontab` for debugging.
 
 #### Execution history and debugging
 
-Each scheduled invocation is recorded in the mounted workspace:
+Each scheduled invocation is recorded under scheduler state:
 
 ```text
-.pi-web/scheduler/history.jsonl
-.pi-web/scheduler/runs/<run-id>/metadata.json
-.pi-web/scheduler/runs/<run-id>/stdout.log
-.pi-web/scheduler/runs/<run-id>/stderr.log
+/home/agent/.pi/scheduled/history.jsonl
+/home/agent/.pi/scheduled/runs/<run-id>/metadata.json
+/home/agent/.pi/scheduled/runs/<run-id>/stdout.log
+/home/agent/.pi/scheduled/runs/<run-id>/stderr.log
 ```
 
 The local **Scheduled runs** PI WEB panel shows run status, duration, exit code, a basic failure classification, and captured stdout/stderr. Select a run to inspect its logs. Scheduler output is ignored by git because agent output can contain workspace-derived or prompt-derived content.

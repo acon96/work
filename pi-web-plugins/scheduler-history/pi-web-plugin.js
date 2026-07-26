@@ -1,4 +1,4 @@
-const HISTORY_PATH = ".pi-web/scheduler/history.jsonl";
+const HISTORY_PATH = "/home/agent/.pi/scheduled/history.jsonl";
 const MAX_LOG_CHARS = 20_000;
 
 function parseHistory(content) {

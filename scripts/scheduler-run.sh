@@ -4,7 +4,7 @@
 set -euo pipefail
 
 WORKSPACE="/workspace"
-HISTORY_DIR="$WORKSPACE/.pi-web/scheduler"
+HISTORY_DIR="${SCHEDULER_STATE_DIR:-/home/agent/.pi/scheduled}"
 RUNS_DIR="$HISTORY_DIR/runs"
 HISTORY_FILE="$HISTORY_DIR/history.jsonl"
 MAX_RUNS="${SCHEDULER_HISTORY_MAX_RUNS:-200}"
@@ -39,6 +39,9 @@ started_ms="$(date +%s%3N)"
 mkdir -p "$run_dir"
 chmod 0700 "$HISTORY_DIR" "$RUNS_DIR" "$run_dir"
 
+# Use absolute in-container paths for PI WEB plugin file reads.
+history_abs_base="/home/agent/.pi/scheduled"
+
 append_history() {
     # Each record is one compact JSON line. O_APPEND makes individual small writes
     # practical for concurrently scheduled jobs while preserving a human-readable index.
@@ -50,8 +53,8 @@ initial_record="$(jq -cn \
     --arg runId "$run_id" \
     --arg task "$task_name" \
     --arg startedAt "$started_at" \
-    --arg stdout ".pi-web/scheduler/runs/$run_id/stdout.log" \
-    --arg stderr ".pi-web/scheduler/runs/$run_id/stderr.log" \
+    --arg stdout "$history_abs_base/runs/$run_id/stdout.log" \
+    --arg stderr "$history_abs_base/runs/$run_id/stderr.log" \
     --argjson taskDefinition "$task_json" \
     '{event: $event, runId: $runId, task: $task, startedAt: $startedAt, stdoutPath: $stdout, stderrPath: $stderr, taskDefinition: $taskDefinition}')"
 append_history "$initial_record"
@@ -128,8 +131,8 @@ final_record="$(jq -cn \
     --arg status "$status" \
     --arg startedAt "$started_at" \
     --arg finishedAt "$finished_at" \
-    --arg stdout ".pi-web/scheduler/runs/$run_id/stdout.log" \
-    --arg stderr ".pi-web/scheduler/runs/$run_id/stderr.log" \
+    --arg stdout "$history_abs_base/runs/$run_id/stdout.log" \
+    --arg stderr "$history_abs_base/runs/$run_id/stderr.log" \
     --arg classification "$classification" \
     --arg stderrTail "$stderr_tail" \
     --argjson exitCode "$exit_code" \
