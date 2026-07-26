@@ -248,8 +248,8 @@ Default git configuration for the `agent` user.  Copied into the container at `/
 
 | Extension                        | Pinned Version | Purpose                                         |
 |----------------------------------|----------------|-------------------------------------------------|
-| `@earendil-works/pi-coding-agent` | `0.80.2`       | Pi Coding Agent core (SDK + runtime)            |
-| `@jmfederico/pi-web`             | `1.202606.7`   | Web UI and session daemon                       |
+| `@earendil-works/pi-coding-agent` | `0.82.1`       | Pi Coding Agent core (SDK + runtime)            |
+| `@jmfederico/pi-web`             | `1.202607.2`   | Web UI and session daemon                       |
 | `@amartinr/pi-searxng`           | `1.0.3`        | SearXNG search integration                      |
 | `pi-lens`                        | `3.8.61`       | Code lens / language server integration         |
 | `pi-subagents`                   | `0.31.0`       | Spawn sub-agent sessions                        |
@@ -339,7 +339,7 @@ scheduler_task({
 
 1. **Command:** Use `/task schedule` for simple tasks, or `scheduler_task` tool for advanced features
 2. **Storage:** Task metadata stored as comments in `/workspace/.scheduler.crontab`
-3. **Execution:** Supercronic monitors the crontab and runs `pi --mode print` with configured options at scheduled times
+3. **Execution:** Supercronic monitors the crontab and invokes a wrapper that runs `pi -p` with configured options at scheduled times
 4. **Isolation:** Each task runs in an isolated agent session
 
 #### Viewing and managing tasks
@@ -350,6 +350,23 @@ scheduler_task({
 ```
 
 The crontab file can also be inspected directly at `/workspace/.scheduler.crontab` for debugging.
+
+#### Execution history and debugging
+
+Each scheduled invocation is recorded in the mounted workspace:
+
+```text
+.pi-web/scheduler/history.jsonl
+.pi-web/scheduler/runs/<run-id>/metadata.json
+.pi-web/scheduler/runs/<run-id>/stdout.log
+.pi-web/scheduler/runs/<run-id>/stderr.log
+```
+
+The local **Scheduled runs** PI WEB panel shows run status, duration, exit code, a basic failure classification, and captured stdout/stderr. Select a run to inspect its logs. Scheduler output is ignored by git because agent output can contain workspace-derived or prompt-derived content.
+
+The wrapper retains the most recent 200 run directories by default. Set `SCHEDULER_HISTORY_MAX_RUNS` to change that number, or set it to `0` to disable pruning. The JSONL index is append-only, so rows whose logs have been pruned can remain in the index.
+
+After building the image, reload the PI WEB browser tab so it discovers the seeded `scheduler-history` local plugin. The entrypoint does not overwrite a user-managed copy in the persistent PI WEB directory.
 
 ### Skills
 

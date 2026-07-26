@@ -202,6 +202,14 @@ if [[ ! -f "$SCHEDULER_CRONTAB" ]]; then
     log "Created empty scheduler crontab at $SCHEDULER_CRONTAB"
 fi
 
+# Scheduler execution history is workspace-scoped so PI WEB can display it using
+# its documented workspace file helper and so it persists with WORKSPACE_DIR.
+SCHEDULER_HISTORY_DIR="/workspace/.pi-web/scheduler"
+mkdir -p "$SCHEDULER_HISTORY_DIR/runs"
+touch "$SCHEDULER_HISTORY_DIR/history.jsonl"
+chown -R agent:agent "/workspace/.pi-web"
+chmod 0700 "/workspace/.pi-web" "$SCHEDULER_HISTORY_DIR" "$SCHEDULER_HISTORY_DIR/runs"
+
 # ── git credentials ──────────────────────────────────────────────────────────
 # A root-mediated helper is not meaningfully secret from the agent: anything
 # the agent can use via git, it can also trigger directly. For HTTPS auth we
@@ -223,6 +231,15 @@ fi
 log "Preparing pi-web data directory"
 mkdir -p "$PI_WEB_DATA_DIR"
 chown agent:agent "$PI_WEB_DATA_DIR"
+
+# Seed the local browser plugin once. The persistent data directory is the PI WEB
+# discovery location; never overwrite a user-managed plugin on subsequent starts.
+if [[ ! -e "$PI_WEB_DATA_DIR/plugins/scheduler-history" ]]; then
+    mkdir -p "$PI_WEB_DATA_DIR/plugins"
+    cp -R /app/pi-web-plugins/scheduler-history "$PI_WEB_DATA_DIR/plugins/scheduler-history"
+    chown -R agent:agent "$PI_WEB_DATA_DIR/plugins/scheduler-history"
+    log "Installed Scheduler History PI WEB plugin"
+fi
 
 SESSIOND_SOCKET_DIR="$(dirname "$PI_WEB_SESSIOND_SOCKET")"
 mkdir -p "$SESSIOND_SOCKET_DIR"

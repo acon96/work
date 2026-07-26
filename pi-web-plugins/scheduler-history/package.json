@@ -1,0 +1,14 @@
+{
+  "name": "work-scheduler-history-plugin",
+  "private": true,
+  "type": "module",
+  "piWeb": {
+    "plugins": [
+      {
+        "id": "scheduler-history",
+        "module": "pi-web-plugin.js",
+        "machineSpecific": true
+      }
+    ]
+  }
+}

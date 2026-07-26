@@ -11,7 +11,8 @@
  */
 
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import { getModel, KnownProvider } from "@earendil-works/pi-ai";
+import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
+import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
 import { readFile } from "node:fs/promises";
 
 // ── Config types ──────────────────────────────────────────────────────────────
@@ -38,6 +39,19 @@ interface LlamaSwapConfig {
   apiKey?:  string;
   fieldMapping?: FieldMapping;
 }
+
+const THINKING_FORMATS = new Set<NonNullable<OpenAICompletionsCompat["thinkingFormat"]>>([
+  "ant-ling",
+  "chat-template",
+  "deepseek",
+  "openai",
+  "openrouter",
+  "qwen",
+  "qwen-chat-template",
+  "string-thinking",
+  "together",
+  "zai",
+]);
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -75,11 +89,19 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
 
   const isPeer = dig(raw, "meta.llamaswap.peerID") !== undefined;
   const modelId = raw.id as string;
+  const configuredThinkingFormat = fm.thinkingFormat;
+  const thinkingFormat = configuredThinkingFormat && THINKING_FORMATS.has(
+    configuredThinkingFormat as NonNullable<OpenAICompletionsCompat["thinkingFormat"]>,
+  )
+    ? configuredThinkingFormat as NonNullable<OpenAICompletionsCompat["thinkingFormat"]>
+    : undefined;
 
   if (isPeer && modelId.split("/").length === 2) {
     // attempt to find the peer's ID in our existing model registry and apply those settings
     const [provider, modelName] = modelId.split("/");
-    const foundModel = getModel(provider as KnownProvider, modelName);
+    // The generated catalog overloads couple each provider literal to its model
+    // literals. Peer metadata is dynamic, so cross that static boundary here.
+    const foundModel = getBuiltinModel(provider as any, modelName);
 
     if (foundModel) {
       return {
@@ -113,7 +135,7 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
       supportsDeveloperRole:   false,
       supportsReasoningEffort: false,
       maxTokensField:          "max_tokens",
-      thinkingFormat: fm?.thinkingFormat ?? undefined,
+      thinkingFormat,
     },
   };
 }
@@ -122,7 +144,7 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
 
 export default async function llamaSwapExtension(pi: ExtensionAPI) {
 
-  const { fieldMapping, baseUrl, apiKey }  = await loadConfig();
+  const { fieldMapping = {}, baseUrl, apiKey }  = await loadConfig();
   const envBaseUrl = process.env.LLAMA_SWAP_URL?.trim().replace(/\/+$/, "");
   const envApiKey = process.env.LLAMA_SWAP_API_KEY?.trim();
   

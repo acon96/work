@@ -4,8 +4,8 @@
  * Manages scheduled agent tasks via supercronic (cron for containers).
  * Tasks are stored in /workspace/.scheduler.crontab and executed by supercronic.
  *
- * Each task runs `pi --mode print` in the workspace directory,
- * spawning an isolated agent session for that task.
+ * Each task runs `pi -p` in the workspace directory through scheduler-run,
+ * which captures durable execution history for each isolated agent session.
  *
  * Commands (via /task):
  *   /task schedule <name> <prompt> [interval]  — create a scheduled task
@@ -31,7 +31,7 @@
  * followed by the cron schedule line that executes pi in print mode.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -115,13 +115,6 @@ function cronToHuman(cron: string): string {
     return `every ${m![1]} days`;
   }
   return cron; // Fall back to showing the raw cron syntax
-}
-
-/**
- * Escape a string for safe inclusion in a bash command.
- */
-function escapeShell(str: string): string {
-  return str.replace(/'/g, "'\\''");
 }
 
 /**
@@ -293,43 +286,10 @@ function writeCrontab(tasks: TaskDefinition[]): void {
     
     lines.push(`# CREATED_AT: ${task.created_at}`);
     
-    // Build pi command with all options
-    let piCommand = "cd /workspace && pi --mode print";
-    
-    if (task.tools) {
-      piCommand += ` --tools '${escapeShell(task.tools)}'`;
-    }
-    
-    if (task.skills) {
-      // Split skills and add each as a separate --skill flag
-      // Skills are names; construct path to standard skills directory
-      const skillList = task.skills.split(",").map((s) => s.trim());
-      for (const skill of skillList) {
-        // If it looks like a path (starts with / or .), use as-is; otherwise assume it's in standard location
-        const skillPath = skill.startsWith("/") || skill.startsWith(".") 
-          ? skill 
-          : `~/.pi/agent/skills/${skill}`;
-        piCommand += ` --skill '${escapeShell(skillPath)}'`;
-      }
-    }
-    
-    if (task.model) {
-      piCommand += ` --model '${escapeShell(task.model)}'`;
-    }
-    
-    if (task.ephemeralSession) {
-      piCommand += " --no-session";
-    }
-    
-    if (task.promptFile) {
-      // Use @file syntax for prompt file
-      piCommand += ` '@${escapeShell(task.promptFile)}'`;
-    } else if (task.prompt) {
-      // Use --message flag for inline prompt
-      piCommand += ` --message '${escapeShell(task.prompt)}'`;
-    }
-    
-    lines.push(`${task.cron} ${piCommand}`);
+    // The wrapper owns safe argument handling, stdout/stderr capture, and durable
+    // run metadata. Base64 has no crontab-significant characters.
+    const encodedTask = Buffer.from(JSON.stringify(task), "utf8").toString("base64");
+    lines.push(`${task.cron} /usr/local/bin/scheduler-run '${encodedTask}'`);
     lines.push("");
   }
 
@@ -523,7 +483,7 @@ export default function schedulerExtension(pi: ExtensionAPI) {
     label: "Scheduler Task",
     description:
       "Manage scheduled agent tasks via supercronic. Actions: schedule, list, delete. " +
-      "Tasks run in the workspace directory using `pi --mode print`. " +
+      "Tasks run in the workspace directory using `pi -p` and write history under .pi-web/scheduler. " +
       "Supports promptFile (via @file syntax), tools allowlist, skills, model selection, and ephemeral sessions.",
     parameters: Type.Object({
       action: Type.String({ description: "schedule|list|delete" }),

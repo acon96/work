@@ -90,9 +90,10 @@ COPY config/proxy-allowlist.txt    /config/proxy-allowlist.txt
 COPY config/agent.gitconfig        /home/agent/.gitconfig
 COPY scripts/squid-url-rewrite.py  /usr/local/bin/squid-url-rewrite
 COPY scripts/network-mode.sh       /usr/local/bin/network-mode
+COPY scripts/scheduler-run.sh      /usr/local/bin/scheduler-run
 COPY scripts/entrypoint.sh         /entrypoint.sh
 COPY scripts/healthcheck.sh        /usr/local/bin/healthcheck
-RUN chmod +x /entrypoint.sh /usr/local/bin/squid-url-rewrite /usr/local/bin/network-mode /usr/local/bin/healthcheck
+RUN chmod +x /entrypoint.sh /usr/local/bin/squid-url-rewrite /usr/local/bin/network-mode /usr/local/bin/scheduler-run /usr/local/bin/healthcheck
 
 # ── workspace ─────────────────────────────────────────────────────────────────
 RUN mkdir -p /workspace && chown agent:agent /workspace
@@ -109,6 +110,7 @@ ENV PATH="/app/node_modules/.bin:${PATH}"
 # Copy local extensions and skills into the build context.
 COPY extensions/ /app/extensions/
 COPY skills/ /app/skills/
+COPY pi-web-plugins/ /app/pi-web-plugins/
 
 # ── pi directory structure ───────────────────────────────────────────────────
 # ~/.pi/agent/settings.json — global settings (all projects)

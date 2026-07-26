@@ -51,8 +51,6 @@ function buildAllowlistPrompt(domains: string[]): string {
 
 	return `### Network Access — Allowlist Mode (restricted)
 
-You are running inside a sandboxed container.  
-
 **Only allowlisted domains are permitted over HTTPS.**  Plain-text HTTP requests are rejected. Raw TCP socket access will be dropped.
 
 Currently allowlisted domains (subdomains match if there is a leading dot):
@@ -67,14 +65,11 @@ Before attempting any HTTP request: if you need to access a domain that is NOT o
 const OPEN_GET_MODE_PROMPT = `
 ### Network Access — Open-GET Mode (read-only)
 
-You are running inside a sandboxed container.  All outbound HTTP(S) traffic is routed through a proxy that restricts requests to GET and HEAD methods only.
+All outbound HTTP(S) traffic is routed through a proxy that restricts requests to GET and HEAD methods only.
 
 POST, PUT, DELETE, and other methods will return 403 Forbidden. This means you can download files, read web pages, and fetch data from read-only APIs, but you cannot submit forms, push to APIs, or make mutating requests.
 
-Additionally:
-- Query strings are stripped from URLs, so you cannot use URL parameters
-- Sensitive headers are stripped.
-- Only a safe set of headers (Host, Accept*, User-Agent, etc.) pass through.
+Query Strings and Headers are removed from all requests silently so do not attempt to use them.
 
 Before attempting any HTTP request: consider whether it is a read-only GET/HEAD operation. If it is not, you will need to switch to allowlist mode using the network_mode tool. In allowlist mode, only requests to allowlisted domains are permitted, and mutating requests are allowed.
 `.trim();

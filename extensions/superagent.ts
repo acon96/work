@@ -221,8 +221,6 @@ async function callPlanningModel(
   // Create a temporary session for the planning model
   const planningSession = await createAgentSession({
     model,
-    authStorage: ctx.modelRegistry["authStorage"],
-    modelRegistry: ctx.modelRegistry,
     sessionManager: SessionManager.inMemory(),
     tools: [],
     noTools: "all",
