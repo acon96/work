@@ -359,9 +359,9 @@ Each scheduled invocation is recorded under scheduler state:
 
 ```text
 /home/agent/.pi/scheduled/history.jsonl
-/home/agent/.pi/scheduled/runs/<run-id>/metadata.json
-/home/agent/.pi/scheduled/runs/<run-id>/stdout.log
-/home/agent/.pi/scheduled/runs/<run-id>/stderr.log
+/home/agent/.pi/scheduled/<run-id>/metadata.json
+/home/agent/.pi/scheduled/<run-id>/stdout.log
+/home/agent/.pi/scheduled/<run-id>/stderr.log
 ```
 
 The local **Scheduled runs** PI WEB panel shows run status, duration, exit code, a basic failure classification, and captured stdout/stderr. Select a run to inspect its logs. Scheduler output is ignored by git because agent output can contain workspace-derived or prompt-derived content.

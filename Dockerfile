@@ -107,21 +107,23 @@ RUN npm install --omit=dev 2>&1
 # Expose all npm-installed binaries (pi, pi-web-server, pi-web-sessiond, etc.)
 ENV PATH="/app/node_modules/.bin:${PATH}"
 
-# Copy local extensions and skills into the build context.
-COPY extensions/ /app/extensions/
-COPY skills/ /app/skills/
-COPY pi-web-plugins/ /app/pi-web-plugins/
-
 # ── pi directory structure ───────────────────────────────────────────────────
 # ~/.pi/agent/settings.json — global settings (all projects)
 # ~/.pi/agent/extensions/   — local extension files (auto-discovered by pi)
 # ~/.pi/agent/skills/       — global skills (auto-discovered by pi)
 # ~/.pi/sessions/           — session data (persisted via Docker volume)
 RUN mkdir -p /home/agent/.pi/agent \
- && mkdir -p /home/agent/.pi/extensions \
+ && mkdir -p /home/agent/.pi/agent/extensions \
  && mkdir -p /home/agent/.pi/agent/skills \
- && cp /app/extensions/*.ts /home/agent/.pi/extensions/ \
+ && mkdir -p /home/agent/.pi/web \
  && chown -R agent:agent /home/agent/.pi
+
+COPY extensions/ /home/agent/.pi/agent/extensions/
+COPY skills/ /home/agent/.pi/agent/skills/
+
+# -- Customize pi-web plugins
+RUN rm -rf  /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins/info /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins/workspace-tasks
+COPY pi-web-plugins/ /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins/
 
 # add default settings and models config (can be overridden by bind mounts in docker-compose.yml)
 COPY .pi/agent/settings.json /home/agent/.pi/agent/settings.json
@@ -129,6 +131,12 @@ COPY .pi/agent/models.json /home/agent/.pi/agent/models.json
 
 # Squid log directory (proxy user needs write access).
 RUN mkdir -p /var/log/squid && chown proxy:proxy /var/log/squid
+
+# Set default env vars
+ENV PI_WEB_DATA_DIR="/home/agent/.pi/web"
+ENV SCHEDULER_STATE_DIR="/home/agent/.pi/scheduled"
+ENV SCHEDULER_CRONTAB_PATH="/home/agent/.pi/scheduled/scheduler.crontab"
+ENV PI_WEB_SESSIOND_SOCKET="/tmp/pi-web/sessiond.sock"
 
 # The entrypoint starts dnsmasq + squid + pi-web, then execs the pi-web-server as agent.
 ENTRYPOINT ["/entrypoint.sh"]

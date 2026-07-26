@@ -14,8 +14,9 @@ work/
 ├── .pi/
 │   ├── agent/
 │   │   ├── settings.json        pi global settings (default provider, extensions, packages)
-│   │   └── models.json          pi models config (llama-swap field mapping)
-│   ├── sessions/                Persistent session data (bind-mounted)
+│   │   ├── models.json          pi models config (llama-swap field mapping)
+│   │   └── sessions/            Persistent session data (bind-mounted)
+│   ├── scheduled/               Scheduler state: crontab + run history/dirs (bind-mounted)
 │   └── web/                     Pi Web state (bind-mounted)
 ├── config/
 │   ├── agent.gitconfig          Default git config for agent user
@@ -31,18 +32,20 @@ work/
 │   ├── entrypoint.sh            Container start-up script
 │   ├── network-mode.sh          Runtime network mode switcher (reloads dnsmasq/squid)
 │   ├── healthcheck.sh           Docker healthcheck script
+│   ├── scheduler-run.sh         Cron job wrapper: decodes task, runs pi, persists diagnostics
 │   └── squid-url-rewrite.py     URL rewrite helper (strips query strings, Mode B)
 ├── extensions/
-│   ├── system-prompt.ts         pi extension: injects sandbox env details into system prompt
-│   ├── network-mode.ts          pi extension: runtime network mode status/switch tool + /network
-│   ├── llama-swap.ts            pi extension: llama-swap dynamic model discovery + field mapping
-│   ├── tools.ts                 pi extension: runtime tool toggling
-│   ├── scheduler.ts             pi extension: scheduled tasks via supercronic
-│   ├── todo.ts                  pi extension: persistent todo list
-│   └── superagent.ts            pi extension: weak-model-gathers, strong-model-plans hybrid
+│   ├── system-prompt/           pi extension: injects sandbox env details into system prompt
+│   ├── network-mode/            pi extension: runtime network mode status/switch tool + /network
+│   ├── llama-swap/              pi extension: llama-swap dynamic model discovery + field mapping
+│   ├── scheduler/               pi extension: scheduled tasks via supercronic
+│   ├── todo/                    pi extension: persistent todo list
+│   └── superagent/              pi extension: weak-model-gathers, strong-model-plans hybrid
 ├── skills/
 │   ├── notify/                  pi skill: ntfy.sh push notifications
 │   └── superagent/              pi skill: superagent planning workflow guide
+├── pi-web-plugins/              Pi Web plugin overrides (merged into npm package dist)
+│   └── scheduler-history/       Pi Web plugin: workspace panel for scheduled run history
 └── .github/workflows/docker.yml CI/CD: build & publish image on push to main
 ```
 
@@ -61,7 +64,7 @@ work/
 
 ## Extending extensions
 
-All extensions live in `extensions/*.ts` and implement `ExtensionAPI` from `@earendil-works/pi-coding-agent`.
+All extensions live in `extensions/<name>/index.ts` and implement `ExtensionAPI` from `@earendil-works/pi-coding-agent`.
 
 ### Adding a new tool
 
@@ -140,7 +143,7 @@ The strong model receives all gathered context in a single prompt and returns a 
 - Single strong-model call eliminates multi-turn cache-read costs
 - 60-80% cost reduction vs. traditional strong-model-drives-all workflows
 
-See `extensions/pi-superagent.README.md` for full documentation.
+See `extensions/superagent/README.md` for full documentation.
 
 ---
 
@@ -262,6 +265,7 @@ The image is tagged with:
 - [ ] pi-superagent extension loads and `/superagent models` lists available models
 - [ ] SearXNG container starts and responds on port 8080
 - [ ] `.pi/sessions` bind mount persists session data across container rebuilds
+- [ ] `.pi/scheduled` bind mount persists scheduler state across container rebuilds
 - [ ] Pi Web web server starts and responds on port 8504
 - [ ] Healthcheck passes for work container (squid, dnsmasq, pi-web, supercronic)
 - [ ] Healthcheck passes for searxng container

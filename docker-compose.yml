@@ -70,9 +70,6 @@ services:
       # Pi Web web server bind host (must be 0.0.0.0 inside the container so
       # Docker's port mapping can reach it; restrict exposure via published ports)
       PI_WEB_HOST: ${PI_WEB_HOST:-0.0.0.0}
-      PI_WEB_DATA_DIR: /home/agent/.pi/web
-      # Scheduler data directory (crontab + history + logs)
-      SCHEDULER_STATE_DIR: /home/agent/.pi/scheduled
 
     # ── security ───────────────────────────────────────────────────────────────
     cap_drop:
@@ -83,14 +80,6 @@ services:
       - LINUX_IMMUTABLE  # Allows chattr +i on /etc/sudoers (defense-in-depth)
     security_opt:
       - seccomp:unconfined
-
-    # ── healthcheck ────────────────────────────────────────────────────────────
-    healthcheck:
-      test: ["/usr/local/bin/healthcheck"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
 
     restart: unless-stopped
 

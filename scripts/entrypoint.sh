@@ -16,29 +16,7 @@ AGENT_GITCONFIG="$AGENT_HOME/.gitconfig"
 AGENT_GIT_CREDENTIALS="$AGENT_HOME/.git-credentials"
 NETWORK_MODE_SCRIPT="/usr/local/bin/network-mode"
 
-export PI_WEB_DATA_DIR="${PI_WEB_DATA_DIR:-$AGENT_HOME/.pi/web}"
-# Container-specific opinion: keep live Unix socket on local tmpfs-backed path.
-export PI_WEB_SESSIOND_SOCKET="/tmp/pi-web/sessiond.sock"
-export SCHEDULER_STATE_DIR="${SCHEDULER_STATE_DIR:-$AGENT_HOME/.pi/scheduled}"
-export SCHEDULER_CRONTAB_PATH="${SCHEDULER_CRONTAB_PATH:-$SCHEDULER_STATE_DIR/scheduler.crontab}"
-
 log() { echo "[entrypoint] $*"; }
-
-safe_chown() {
-    local label="$1"
-    shift
-    if ! chown "$@" 2>/dev/null; then
-        log "Warning: chown failed for ${label} (likely bind-mount ownership restrictions)"
-    fi
-}
-
-safe_chmod() {
-    local label="$1"
-    shift
-    if ! chmod "$@" 2>/dev/null; then
-        log "Warning: chmod failed for ${label} (likely bind-mount permission restrictions)"
-    fi
-}
 
 urlencode() {
     jq -nr --arg value "$1" '$value|@uri'
@@ -77,29 +55,23 @@ configure_git_credentials() {
 }
 
 # ── SSL cert generation (first-startup only) ──────────────────────────────────
-# Generate a self-signed MITM CA at first boot so the private key is never
+# Generate a self-signed MITM CA so the private key is never
 # baked into the image layers.  Injected into the system trust store so node
 # processes running as agent trust it automatically.
-SSL_FLAG="/etc/work/.ssl-initialized"
-if [[ ! -f "$SSL_FLAG" ]]; then
-    log "Generating self-signed SSL CA (first startup)"
-    openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
-        -subj "/CN=Work Proxy CA/O=Work Sandbox/C=US" \
-        -keyout /etc/squid/ssl-ca.key \
-        -out /etc/squid/ssl-ca.crt \
-     && cp /etc/squid/ssl-ca.crt /usr/local/share/ca-certificates/work-proxy-ca.crt \
-     && update-ca-certificates
+log "Generating self-signed SSL CA for Squid MITM"
+openssl req -new -newkey rsa:4096 -days 3650 -nodes -x509 \
+    -subj "/CN=Work Proxy CA/O=Work Sandbox/C=US" \
+    -keyout /etc/squid/ssl-ca.key \
+    -out /etc/squid/ssl-ca.crt \
+    && cp /etc/squid/ssl-ca.crt /usr/local/share/ca-certificates/work-proxy-ca.crt \
+    && update-ca-certificates
 
-    # Squid SSL certificate cache (Mode B) — must be owned by proxy user.
-    # security_file_certgen -c creates the ssl_db directory itself; pre-creating it causes failure.
-    /usr/lib/squid/security_file_certgen -c -s /var/lib/squid/ssl_db -M 4MB \
-     && chown -R proxy:proxy /var/lib/squid/ssl_db
+# Squid SSL certificate cache (Mode B) — must be owned by proxy user.
+# security_file_certgen -c creates the ssl_db directory itself; pre-creating it causes failure.
+sudo /usr/lib/squid/security_file_certgen -c -s /var/lib/squid/ssl_db -M 4MB \
+    && chown -R proxy:proxy /var/lib/squid/ssl_db
 
-    touch "$SSL_FLAG"
-    log "SSL CA generated and trusted."
-else
-    log "SSL CA already exists — skipping generation."
-fi
+log "SSL CA generated and trusted."
 
 # ── env-var allowlist overrides ──────────────────────────────────────────────
 # PROXY_ALLOWLIST: comma-separated domains, appends to /config/proxy-allowlist.txt
@@ -211,24 +183,10 @@ cp /etc/resolv.conf /etc/resolv.conf.upstream 2>/dev/null || true
 echo "nameserver 127.0.0.1" > /etc/resolv.conf
 
 # ── scheduler crontab ────────────────────────────────────────────────────────
-# Create scheduler state under a dedicated persisted pi agent directory.
+# Create scheduler crontab and state under a dedicated persisted pi agent directory.
 # Defaults to /home/agent/.pi/scheduled.
-mkdir -p "$SCHEDULER_STATE_DIR"
-safe_chown "scheduler state dir" -R agent:agent "$SCHEDULER_STATE_DIR"
-
-SCHEDULER_CRONTAB="$SCHEDULER_CRONTAB_PATH"
-if [[ ! -f "$SCHEDULER_CRONTAB" ]]; then
-    touch "$SCHEDULER_CRONTAB"
-    safe_chown "scheduler crontab" agent:agent "$SCHEDULER_CRONTAB"
-    log "Created empty scheduler crontab at $SCHEDULER_CRONTAB"
-fi
-
-# Scheduler execution history is persisted with scheduler state.
-SCHEDULER_HISTORY_DIR="$SCHEDULER_STATE_DIR"
-mkdir -p "$SCHEDULER_HISTORY_DIR/runs"
-touch "$SCHEDULER_HISTORY_DIR/history.jsonl"
-safe_chown "scheduler history directory" -R agent:agent "$SCHEDULER_HISTORY_DIR"
-safe_chmod "scheduler history directories" 0700 "$SCHEDULER_HISTORY_DIR" "$SCHEDULER_HISTORY_DIR/runs"
+touch "$SCHEDULER_STATE_DIR/history.jsonl"
+touch "$SCHEDULER_STATE_DIR/scheduler.crontab"
 
 # ── git credentials ──────────────────────────────────────────────────────────
 # A root-mediated helper is not meaningfully secret from the agent: anything
@@ -243,24 +201,8 @@ if ! "$NETWORK_MODE_SCRIPT" set "$NETWORK_MODE"; then
     exit 1
 fi
 
-# ── pi-web: session daemon ───────────────────────────────────────────────────
-# The data dir may be a bind mount (host-created root-owned); fix permissions
-# and remove any stale socket from a previous crash before starting.
-# Note: on bind mounts (e.g. macOS Docker Desktop), rm may fail if the socket
-# is owned by root — ignore the error since the daemon handles stale sockets.
-log "Preparing pi-web data directory"
-mkdir -p "$PI_WEB_DATA_DIR"
-safe_chown "pi-web data dir" agent:agent "$PI_WEB_DATA_DIR"
-
-# Seed the local browser plugin once. The persistent data directory is the PI WEB
-# discovery location; never overwrite a user-managed plugin on subsequent starts.
-if [[ ! -e "$PI_WEB_DATA_DIR/plugins/scheduler-history" ]]; then
-    mkdir -p "$PI_WEB_DATA_DIR/plugins"
-    cp -R /app/pi-web-plugins/scheduler-history "$PI_WEB_DATA_DIR/plugins/scheduler-history"
-    safe_chown "pi-web scheduler plugin" -R agent:agent "$PI_WEB_DATA_DIR/plugins/scheduler-history"
-    log "Installed Scheduler History PI WEB plugin"
-fi
-
+# ── pi-web: ensure socket is free ───────────────────────────────────────────────────
+# The pi-web session daemon will create a Unix socket at $PI_WEB_SESSIOND_SOCKET.
 SESSIOND_SOCKET_DIR="$(dirname "$PI_WEB_SESSIOND_SOCKET")"
 mkdir -p "$SESSIOND_SOCKET_DIR"
 chown agent:agent "$SESSIOND_SOCKET_DIR"
@@ -282,8 +224,8 @@ done
 
 # ── start supercronic (scheduler) ────────────────────────────────────────────
 # Supercronic monitors the scheduler crontab and executes tasks as the agent user.
-log "Starting supercronic (crontab: $SCHEDULER_CRONTAB)"
-gosu agent supercronic -inotify "$SCHEDULER_CRONTAB" &
+log "Starting supercronic (crontab: $SCHEDULER_CRONTAB_PATH)"
+gosu agent supercronic -inotify "$SCHEDULER_CRONTAB_PATH" &
 SUPERCRONIC_PID=$!
 
 # ── exec the pi server as agent ──────────────────────────────────────────────

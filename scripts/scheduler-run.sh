@@ -4,9 +4,7 @@
 set -euo pipefail
 
 WORKSPACE="/workspace"
-HISTORY_DIR="${SCHEDULER_STATE_DIR:-/home/agent/.pi/scheduled}"
-RUNS_DIR="$HISTORY_DIR/runs"
-HISTORY_FILE="$HISTORY_DIR/history.jsonl"
+HISTORY_FILE="$SCHEDULER_STATE_DIR/history.jsonl"
 MAX_RUNS="${SCHEDULER_HISTORY_MAX_RUNS:-200}"
 
 log() { echo "[scheduler-run] $*" >&2; }
@@ -29,7 +27,7 @@ fi
 
 safe_name="$(tr -cs '[:alnum:].-_' '-' <<<"$task_name" | sed 's/^-//; s/-$//')"
 run_id="$(date -u +%Y%m%dT%H%M%SZ)-${safe_name:-task}-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
-run_dir="$RUNS_DIR/$run_id"
+run_dir="$SCHEDULER_STATE_DIR/$run_id"
 stdout_file="$run_dir/stdout.log"
 stderr_file="$run_dir/stderr.log"
 metadata_file="$run_dir/metadata.json"
@@ -37,7 +35,7 @@ started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 started_ms="$(date +%s%3N)"
 
 mkdir -p "$run_dir"
-chmod 0700 "$HISTORY_DIR" "$RUNS_DIR" "$run_dir"
+chmod 0700 "$SCHEDULER_STATE_DIR" "$run_dir"
 
 # Use absolute in-container paths for PI WEB plugin file reads.
 history_abs_base="/home/agent/.pi/scheduled"
@@ -53,8 +51,8 @@ initial_record="$(jq -cn \
     --arg runId "$run_id" \
     --arg task "$task_name" \
     --arg startedAt "$started_at" \
-    --arg stdout "$history_abs_base/runs/$run_id/stdout.log" \
-    --arg stderr "$history_abs_base/runs/$run_id/stderr.log" \
+    --arg stdout "$history_abs_base/$run_id/stdout.log" \
+    --arg stderr "$history_abs_base/$run_id/stderr.log" \
     --argjson taskDefinition "$task_json" \
     '{event: $event, runId: $runId, task: $task, startedAt: $startedAt, stdoutPath: $stdout, stderrPath: $stderr, taskDefinition: $taskDefinition}')"
 append_history "$initial_record"
@@ -131,8 +129,8 @@ final_record="$(jq -cn \
     --arg status "$status" \
     --arg startedAt "$started_at" \
     --arg finishedAt "$finished_at" \
-    --arg stdout "$history_abs_base/runs/$run_id/stdout.log" \
-    --arg stderr "$history_abs_base/runs/$run_id/stderr.log" \
+    --arg stdout "$history_abs_base/$run_id/stdout.log" \
+    --arg stderr "$history_abs_base/$run_id/stderr.log" \
     --arg classification "$classification" \
     --arg stderrTail "$stderr_tail" \
     --argjson exitCode "$exit_code" \
@@ -145,7 +143,7 @@ append_history "$final_record"
 # Retain the most recent completed run directories. History remains append-only;
 # the UI ignores records whose log directory was pruned.
 if [[ "$MAX_RUNS" =~ ^[0-9]+$ ]] && (( MAX_RUNS > 0 )); then
-    mapfile -t old_runs < <(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk -v max="$MAX_RUNS" 'NR > max { print $2 }')
+    mapfile -t old_runs < <(find "$SCHEDULER_STATE_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk -v max="$MAX_RUNS" 'NR > max { print $2 }')
     for old_run in "${old_runs[@]}"; do
         rm -rf -- "$old_run"
     done
