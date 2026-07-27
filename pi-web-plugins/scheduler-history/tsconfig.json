@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "declaration": false,
+    "outDir": ".",
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["pi-web-plugin.ts"],
+  "exclude": ["node_modules"]
+}

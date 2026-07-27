@@ -122,9 +122,26 @@ RUN mkdir -p /home/agent/.pi/agent \
 COPY extensions/ /home/agent/.pi/agent/extensions/
 COPY skills/ /home/agent/.pi/agent/skills/
 
-# -- Customize pi-web plugins
-RUN rm -rf  /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins/info /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins/workspace-tasks
-COPY pi-web-plugins/ /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins/
+# -- Compile custom pi-web plugins from TypeScript ────────────────────────
+# Install TypeScript as a build dependency (dev-only, not needed at runtime).
+RUN --mount=type=cache,target=/root/.npm \
+    npm install --no-save --omit=dev typescript 2>&1
+
+# Copy the build script and plugin sources, then compile.
+COPY scripts/build-plugins.sh /usr/local/bin/build-plugins
+RUN chmod +x /usr/local/bin/build-plugins
+COPY pi-web-plugins/ /app/.pi-web-plugins-src/
+
+# Remove bundled info and workspace-tasks plugins (replaced by local versions),
+# then compile and install custom plugins from TypeScript.
+RUN PI_WEB_REPLACE_PLUGINS="info workspace-tasks" \
+    /usr/local/bin/build-plugins /app/.pi-web-plugins-src /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins
+
+# Pi Web configuration (pathAccess allows the scheduler history plugin to read
+# execution logs from /home/agent/.pi/scheduled, which lives outside the workspace).
+RUN mkdir -p /home/agent/.config/pi-web
+COPY config/pi-web-config.json /home/agent/.config/pi-web/config.json
+RUN chown -R agent:agent /home/agent/.config
 
 # add default settings and models config (can be overridden by bind mounts in docker-compose.yml)
 COPY .pi/agent/settings.json /home/agent/.pi/agent/settings.json

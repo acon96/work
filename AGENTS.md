@@ -32,6 +32,7 @@ work/
 │   ├── entrypoint.sh            Container start-up script
 │   ├── network-mode.sh          Runtime network mode switcher (reloads dnsmasq/squid)
 │   ├── healthcheck.sh           Docker healthcheck script
+│   ├── build-plugins.sh         Compiles TypeScript pi-web plugins to JS during Docker build
 │   ├── scheduler-run.sh         Cron job wrapper: decodes task, runs pi, persists diagnostics
 │   └── squid-url-rewrite.py     URL rewrite helper (strips query strings, Mode B)
 ├── extensions/
@@ -144,6 +145,14 @@ The strong model receives all gathered context in a single prompt and returns a 
 - 60-80% cost reduction vs. traditional strong-model-drives-all workflows
 
 See `extensions/superagent/README.md` for full documentation.
+
+---
+
+## pi web plugins
+
+Custom pi-web plugins live in `pi-web-plugins/<id>/` and are written in TypeScript (with a `tsconfig.json`) or plain JavaScript. During the Docker build, `scripts/build-plugins.sh` compiles any TypeScript plugins to JavaScript and copies the output into the pi-web plugins directory inside `node_modules`. Bundled plugins to replace are specified via the `PI_WEB_REPLACE_PLUGINS` env var (space-separated).
+
+The `scheduler-history` plugin reads execution logs from `/home/agent/.pi/scheduled/`, which is outside the workspace. Access to this directory is granted via `pathAccess.allowedPaths` in the pi-web config at `config/pi-web-config.json` (installed to `/home/agent/.config/pi-web/config.json` at build time).
 
 ---
 
@@ -261,6 +270,8 @@ The image is tagged with:
 - [ ] sudoers file is immutable (`lsattr /etc/sudoers` shows `i` flag with CAP_LINUX_IMMUTABLE)
 - [ ] unlisted sudo commands are blocked by sudoers (exit code 1, sudo error message)
 - [ ] scheduler extension creates tasks and supercronic executes them
+- [ ] scheduler-history pi-web plugin loads and displays run history in the web UI
+- [ ] scheduler-history plugin can read stdout/stderr logs (pathAccess.allowedPaths configured)
 - [ ] todo extension persists across session restart
 - [ ] pi-superagent extension loads and `/superagent models` lists available models
 - [ ] SearXNG container starts and responds on port 8080
