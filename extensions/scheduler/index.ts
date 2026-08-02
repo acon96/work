@@ -61,7 +61,7 @@ interface TaskDefinition {
 
 /**
  * Parse interval string (e.g., "5m", "2h", "30s") to cron syntax.
- * Returns null if input is invalid or if it's already valid cron syntax.
+ * Returns null if input is invalid or return as-is if it's already valid cron syntax.
  */
 function intervalToCron(input: string): string | null {
   // If it contains spaces, assume it's cron syntax
@@ -493,7 +493,7 @@ export default function schedulerExtension(pi: ExtensionAPI) {
       promptFile: Type.Optional(Type.String({ description: "Path to prompt file (workspace-relative or absolute, mutually exclusive with prompt)" })),
       interval: Type.Optional(
         Type.String({
-          description: "Schedule interval: 5m, 2h, 1d, or cron syntax (e.g., '*/5 * * * *'). Default: hourly",
+          description: "Schedule interval: 5m, 2h, 1d, or cron syntax (e.g., '*/5 * * * *').",
         }),
       ),
       tools: Type.Optional(Type.Array(Type.String(), { description: "Array of allowed tool names (e.g., ['read', 'grep', 'find'])" })),
@@ -501,7 +501,7 @@ export default function schedulerExtension(pi: ExtensionAPI) {
       model: Type.Optional(Type.String({ description: "Model pattern or ID (e.g., 'sonnet', 'gpt-4o')" })),
       ephemeralSession: Type.Optional(Type.Boolean({ description: "Don't save session to disk" })),
     }),
-    async execute(_toolCallId, params) {
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const action = params.action.toLowerCase();
 
       if (action === "list") {
@@ -551,7 +551,7 @@ export default function schedulerExtension(pi: ExtensionAPI) {
         const name = params.name?.trim() ?? "";
         const rawPrompt = params.prompt ?? "";
         const promptFile = params.promptFile?.trim();
-        const intervalInput = params.interval ?? "1h";
+        const intervalInput = params.interval;
         // Convert arrays to comma-separated strings for storage
         const tools = params.tools ? params.tools.join(",") : undefined;
         const skills = params.skills ? params.skills.join(",") : undefined;
@@ -599,6 +599,11 @@ export default function schedulerExtension(pi: ExtensionAPI) {
           }
         }
 
+        // Validate interval or cron syntax
+        if (!intervalInput) {
+          return { content: [{ type: "text", text: "Error: interval is required (e.g., 5m, 2h, 1d, or cron syntax)." }], details: {} };
+        }
+
         const cron = intervalToCron(intervalInput);
         if (!cron) {
           return {
@@ -611,6 +616,18 @@ export default function schedulerExtension(pi: ExtensionAPI) {
 
         if (tasks.some((t) => t.name === name)) {
           return { content: [{ type: "text", text: `Task '${name}' already exists.` }], details: {} };
+        }
+
+        // Make sure the model exists if specified
+        if (model) {
+          const availableModels = ctx.modelRegistry.getAvailable();
+          const foundModel = availableModels.find((m) => m.id === model);
+
+          if (!foundModel) {
+            const similarModels = availableModels.filter((m) => m.id.includes(model) || m.id.);
+            const suggestion = similarModels.length > 0 ? ` Did you mean: ${similarModels.map((m) => m.id).join(", ")}?` : "";
+            return { content: [{ type: "text", text: `Error: model '${model}' not found.${suggestion}` }], details: {} };
+          }
         }
 
         const task: TaskDefinition = {
