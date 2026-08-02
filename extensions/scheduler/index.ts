@@ -624,7 +624,7 @@ export default function schedulerExtension(pi: ExtensionAPI) {
           const foundModel = availableModels.find((m) => m.id === model);
 
           if (!foundModel) {
-            const similarModels = availableModels.filter((m) => m.id.toLowerCase() == model.toLowerCase());
+            const similarModels = availableModels.filter((m) => m.id.includes(model) || m.id.);
             const suggestion = similarModels.length > 0 ? ` Did you mean: ${similarModels.map((m) => m.id).join(", ")}?` : "";
             return { content: [{ type: "text", text: `Error: model '${model}' not found.${suggestion}` }], details: {} };
           }
