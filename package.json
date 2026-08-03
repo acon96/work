@@ -6,13 +6,14 @@
   "keywords": ["pi-package"],
   "pi": {
     "extensions": [
-      "extensions/system-prompt.ts",
-      "extensions/network-mode.ts",
-      "extensions/tools.ts",
-      "extensions/scheduler.ts",
-      "extensions/todo.ts",
-      "extensions/llama-swap.ts",
-      "extensions/superagent.ts"
+      "extensions/system-prompt",
+      "extensions/network-mode",
+      "extensions/tools",
+      "extensions/scheduler",
+      "extensions/todo",
+      "extensions/llama-swap",
+      "extensions/superagent",
+      "extensions/chat-titles"
     ],
     "skills": [
       "skills/notify",
