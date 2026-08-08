@@ -1,0 +1,14 @@
+# Rebuild the search index after bulk updates.
+# Requires manage:system scope.
+mutation {
+  search {
+    rebuildIndex {
+      responseResult {
+        succeeded
+        errorCode
+        slug
+        message
+      }
+    }
+  }
+}

@@ -1,0 +1,10 @@
+# List asset folders under a parent folder (0 = root).
+query($parentFolderId: Int!) {
+  assets {
+    folders(parentFolderId: $parentFolderId) {
+      id
+      slug
+      name
+    }
+  }
+}

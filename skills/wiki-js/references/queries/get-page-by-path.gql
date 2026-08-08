@@ -1,0 +1,26 @@
+# Fetch a single page by path and locale.
+# Bind the $path and $locale variables.
+query($path: String!, $locale: String!) {
+  pages {
+    singleByPath(path: $path, locale: $locale) {
+      id
+      path
+      title
+      description
+      isPublished
+      isPrivate
+      contentType
+      editor
+      tags { tag title }
+      createdAt
+      updatedAt
+      content
+      render
+      toc
+      scriptCss
+      scriptJs
+      publishStartDate
+      publishEndDate
+    }
+  }
+}
