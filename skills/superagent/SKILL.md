@@ -1,6 +1,6 @@
 ---
 name: superagent
-description: Use this skill when the user requests strategic planning, architectural decisions, or complex reasoning that requires a stronger model's judgment.
+description: Use this skill when the user requests strategic planning, architectural decisions, or complex reasoning that requires a stronger model's judgment. Do not invoke this unless explicitly requested by the user.
 ---
 # Superagent Planning Skill
 
