@@ -47,8 +47,13 @@ async function generateTitle(prompt: string, ctx: ExtensionContext): Promise<str
   const loader = new DefaultResourceLoader({
     cwd: ctx.cwd,
     agentDir: getAgentDir(),
-    systemPrompt: "",
-    systemPromptOverride: () => "",
+    // buildSystemPrompt treats empty string as "no custom prompt" and falls back
+    // to Pi's full default system prompt. Keep this non-empty to bypass that path.
+    systemPromptOverride: () => "Generate a short chat title only.",
+    // Prevent hidden prompt growth from APPEND_SYSTEM.md / AGENTS.md / skills.
+    appendSystemPromptOverride: () => [],
+    noContextFiles: true,
+    noSkills: true,
     extensionsOverride: (base) => ({ ...base, extensions: [] }),
   });
   await loader.reload();
