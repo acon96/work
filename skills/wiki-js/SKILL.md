@@ -12,8 +12,6 @@ This document describes how to use `manage_wiki.py` as a unified Wiki.js CLI for
 - navigation operations
 - connectivity checks
 
-This local skill file is intended to replace ad-hoc `wiki-gql.sh` and `wiki-upload.sh` usage patterns.
-
 ## Script Location
 
 - Script: `<skill_root>/scripts/manage_wiki.py`
@@ -43,6 +41,7 @@ Useful global flags:
 
 - `--timeout 30`
 - `--verbose` (prints request debug info to stderr)
+- `--content-file <file>`: Always use this for page content. Write the staged page content into `/tmp/*.md` and pass the file path to this flag. Avoid passing raw content on the command line.
 
 ## Quick Start
 
@@ -187,6 +186,30 @@ By id:
 ./manage_wiki.py nav set-tree --file ./nav-tree.json
 ```
 
+**Example Tree JSON:**
+```json
+[
+  {
+    "locale": "en",
+    "items": [
+      { "id": "home", "kind": "page", "label": "Home", "target": "home", "targetType": "internal" },
+      { "id": "docs", "kind": "category", "label": "Documentation", "target": "", "targetType": "header" },
+    ]
+  }
+]
+```
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `id` | String | Unique identifier for the navigation item. |
+| `kind` | String | The type of item: `page`, `link`, `category`, or `separator`. |
+| `label` | String | The text displayed in the sidebar. |
+| `target` | String | The destination. For `internal`, it's the page path. For `external`, a URL. |
+| `targetType` | String | One of `internal`, `external`, or `header`. |
+| `icon` | String | (Optional) Icon identifier. |
+| `visibilityMode` | String | `public`, `private`, or `groups`. |
+| `visibilityGroups`| Array | (Optional) List of group IDs if `visibilityMode` is `groups`. |
+
 ### Add items
 
 Add internal page item:
@@ -226,8 +249,8 @@ Remove item:
 
 Note: Current schema in this environment is flat navigation items (no nested children field).
 
-## Output and Error Behavior
+## Explicit Notes
 
-- Successful commands print JSON to stdout.
-- Failures print `Error: ...` to stderr and return non-zero exit code.
-- GraphQL-level failures are surfaced with code/slug/message when available.
+- Do not spend time introspecting the contents of `manage_wiki.py`. If it is not working correctly then report it to the user. Do not attempt to debug or fix the script yourself.
+- When making links or working with the navigation tree: all pages are referred to by their proper title. There is no internal ID reference or slug style reference used
+- In order to avoid corrupting page content, all page edits should land as a local markdown file and then be written to the wiki using the `--content-file` flag.
