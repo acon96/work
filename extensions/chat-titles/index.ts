@@ -47,6 +47,7 @@ async function generateTitle(prompt: string, ctx: ExtensionContext): Promise<str
   const loader = new DefaultResourceLoader({
     cwd: ctx.cwd,
     agentDir: getAgentDir(),
+    systemPrompt: "",
     systemPromptOverride: () => "",
     extensionsOverride: (base) => ({ ...base, extensions: [] }),
   });
