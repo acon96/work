@@ -36,6 +36,7 @@ work/
 │   ├── scheduler-run.sh         Cron job wrapper: decodes task, runs pi, persists diagnostics
 │   └── squid-url-rewrite.py     URL rewrite helper (strips query strings, Mode B)
 ├── extensions/
+│   ├── chat-titles/            pi extension: auto-generates concise session titles from first user prompt
 │   ├── system-prompt/           pi extension: injects sandbox env details into system prompt
 │   ├── network-mode/            pi extension: runtime network mode status/switch tool + /network
 │   ├── llama-swap/              pi extension: llama-swap dynamic model discovery + field mapping
@@ -44,7 +45,8 @@ work/
 │   └── superagent/              pi extension: weak-model-gathers, strong-model-plans hybrid
 ├── skills/
 │   ├── notify/                  pi skill: ntfy.sh push notifications
-│   └── superagent/              pi skill: superagent planning workflow guide
+│   ├── superagent/              pi skill: superagent planning workflow guide
+│   └── wiki-js/                 pi skill: operational workflow for Wiki.js page/asset/nav management
 ├── pi-web-plugins/              Pi Web plugin overrides (merged into npm package dist)
 │   └── scheduler-history/       Pi Web plugin: workspace panel for scheduled run history
 └── .github/workflows/docker.yml CI/CD: build & publish image on push to main
@@ -187,6 +189,16 @@ Set `URL_REWRITE_ENABLED=true` via environment variable. This appends `url_rewri
 ---
 
 ## pi extension configuration
+
+### Source of truth for what is loaded
+
+- `package.json` → `pi.extensions` and `pi.skills` defines what Pi loads.
+- `extensions/` and `skills/` can contain additional local items that are not loaded until listed in `package.json`.
+
+Current `package.json` includes:
+
+- Extensions: `system-prompt`, `network-mode`, `scheduler`, `todo`, `llama-swap`, `superagent`, `chat-titles`.
+- Skills: `notify`, `superagent`. `wiki-js`
 
 ### package.json
 

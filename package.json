@@ -8,7 +8,6 @@
     "extensions": [
       "extensions/system-prompt",
       "extensions/network-mode",
-      "extensions/tools",
       "extensions/scheduler",
       "extensions/todo",
       "extensions/llama-swap",
@@ -17,7 +16,8 @@
     ],
     "skills": [
       "skills/notify",
-      "skills/superagent"
+      "skills/superagent",
+      "skills/wiki-js"
     ]
   },
   "dependencies": {
