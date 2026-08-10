@@ -18,7 +18,6 @@
     "/app/node_modules/@jmfederico/pi-web",
     "/app/node_modules/@amartinr/pi-searxng",
     "/app/node_modules/pi-lens",
-    "/app/node_modules/pi-subagents",
     "/app/node_modules/pi-smart-fetch"
   ]
 }

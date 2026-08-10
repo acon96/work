@@ -252,7 +252,6 @@ Default git configuration for the `agent` user.  Copied into the container at `/
 | `@jmfederico/pi-web`             | `1.202607.2`   | Web UI and session daemon                       |
 | `@amartinr/pi-searxng`           | `1.0.3`        | SearXNG search integration                      |
 | `pi-lens`                        | `3.8.61`       | Code lens / language server integration         |
-| `pi-subagents`                   | `0.31.0`       | Spawn sub-agent sessions                        |
 
 ### Commands
 
