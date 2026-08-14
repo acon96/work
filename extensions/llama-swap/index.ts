@@ -117,6 +117,11 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
     thinkingLevelMap = Object.fromEntries(
       PI_THINKING_LEVELS.map((level) => [level, availableLevels.has(level) ? level : null]),
     );
+  } else if (fm.reasoning) {
+    // if reasoning is enabled but no levels are provided, then assume no thinking effort support
+    thinkingLevelMap = Object.fromEntries(
+      PI_THINKING_LEVELS.map((level) => [level, null ]),
+    )
   }
 
   return {
