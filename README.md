@@ -248,10 +248,10 @@ Default git configuration for the `agent` user.  Copied into the container at `/
 
 | Extension                        | Pinned Version | Purpose                                         |
 |----------------------------------|----------------|-------------------------------------------------|
-| `@earendil-works/pi-coding-agent` | `0.82.1`       | Pi Coding Agent core (SDK + runtime)            |
-| `@jmfederico/pi-web`             | `1.202607.2`   | Web UI and session daemon                       |
+| `@earendil-works/pi-coding-agent` | `0.84.1`       | Pi Coding Agent core (SDK + runtime)            |
+| `@jmfederico/pi-web`             | `1.202608.1`   | Web UI and session daemon                       |
 | `@amartinr/pi-searxng`           | `1.0.3`        | SearXNG search integration                      |
-| `pi-lens`                        | `3.8.61`       | Code lens / language server integration         |
+| `pi-lens`                        | `3.8.71`       | Code lens / language server integration         |
 
 ### Commands
 

@@ -6,6 +6,7 @@
     "plugins": [
       {
         "id": "scheduler-history",
+        "browserRoot": ".",
         "module": "pi-web-plugin.js",
         "machineSpecific": true
       }
