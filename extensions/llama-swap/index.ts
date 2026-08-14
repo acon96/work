@@ -114,13 +114,14 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
     chatTemplateKwargs.reasoning_effort = { "$var": "thinking.effort" };
     supportsReasoningEffort = true;
     const availableLevels = new Set(rawReasoningLevels);
+    // only remap off to none
     thinkingLevelMap = Object.fromEntries(
-      PI_THINKING_LEVELS.map((level) => [level, availableLevels.has(level) ? level : null]),
+      PI_THINKING_LEVELS.map((level) => [level, availableLevels.has(level) ? (level == "off" ? "none" : level) : null]),
     );
   } else if (fm.reasoning) {
     // if reasoning is enabled but no levels are provided, then assume no thinking effort support
     thinkingLevelMap = Object.fromEntries(
-      PI_THINKING_LEVELS.map((level) => [level, null ]),
+      PI_THINKING_LEVELS.map((level) => [level, null]),
     )
   }
 
@@ -141,9 +142,7 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
     compat: {
       supportsDeveloperRole: false,
       supportsReasoningEffort: supportsReasoningEffort,
-      maxTokensField: "max_tokens",
-      thinkingFormat: "chat-template",
-      chatTemplateKwargs,
+      maxTokensField: "max_tokens"
     },
   };
 }

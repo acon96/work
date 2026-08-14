@@ -54,146 +54,54 @@ macros:
   split-row: --split-mode row
 
 models:
-
-  "qwen3.6-27b":
+  "qwen3.8-27b":
     cmd: >
       ${llama-cli}
-        -np 1
-        --model /app/models/unsloth/Qwen3.6-27B-GGUF/Qwen3.6-27B-UD-Q6_K_XL.gguf
-        --ctx-size ${200k}
-        ${batch-size-4096}
-        ${spec-ngram}
-        ${split-tensor}
-        --reasoning-budget-message "-- Ok, I am done thinking for now. I need to make a tool call or respond to the user."
-    ttl: 1800
-    metadata:
-      context_len: ${168k}
-      max_tokens: ${32k}
-      thinking: true
-    filters:
-      setParamsByID:
-        "${MODEL_ID}":
-          chat_template_kwargs:
-            enable_thinking: true
-            preserve_thinking: true
-          temperature: 1.0
-          top_p: 0.95
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 1.5
-          repeat_penalty: 1.0
-          thinking_budget_tokens: 8192
-        "${MODEL_ID}:high":
-          chat_template_kwargs:
-            enable_thinking: true
-            preserve_thinking: true
-          temperature: 1.0
-          top_p: 0.95
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 1.5
-          repeat_penalty: 1.1
-          thinking_budget_tokens: 24576
-        "${MODEL_ID}:coding":
-          chat_template_kwargs:
-            enable_thinking: true
-            preserve_thinking: true
-          temperature: 0.6
-          top_p: 0.95
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 0.0
-          repeat_penalty: 1.0
-          thinking_budget_tokens: 8192
-        "${MODEL_ID}:coding-high":
-          chat_template_kwargs:
-            enable_thinking: true
-            preserve_thinking: true
-          temperature: 0.6
-          top_p: 0.95
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 0.0
-          repeat_penalty: 1.1
-          thinking_budget_tokens: 24576
-        "${MODEL_ID}:instruct":
-          chat_template_kwargs:
-            enable_thinking: false
-          temperature: 0.7
-          top_p: 0.8
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 1.5
-          repeat_penalty: 1.0
-
-  "qwen3.6-35b-a3b":
-    cmd: >
-      ${llama-cli}
-        -np 1
-        --model /app/models/unsloth/Qwen3.6-35B-A3B-GGUF/Qwen3.6-35B-A3B-MXFP4_MOE.gguf
+        --model /app/models/Qwen/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q8_0.gguf
         --ctx-size ${256k}
-        ${batch-size-4096}
-        ${spec-ngram}
+        --batch-size 4096 --ubatch-size 1024
+        ${k-cache-q8}
+        ${v-cache-q8}
+        ${draft-k-cache-q4}
+        ${draft-v-cache-q4}
         ${split-tensor}
-        --reasoning-budget-message "-- Ok, I am done thinking for now. I need to make a tool call or respond to the user."
-        --slot-save-path /app/kv-cache
+        ${spec-ngram-mtp}
+        --temperature 1.0
+        --top-p 0.95
+        --top-k 20
+        --min-p 0.0
+        --presence-penalty 0.0
+        --repeat-penalty 1.0
+        --reasoning on
+        --reasoning-preserve
     ttl: 1800
     metadata:
-      context_len: ${224k}
+      context_len: ${256k}
       max_tokens: ${32k}
       thinking: true
-    filters:
-      setParamsByID:
-        "${MODEL_ID}":
-          chat_template_kwargs:
-            enable_thinking: true
-            preserve_thinking: true
-          temperature: 1.0
-          top_p: 0.95
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 1.5
-          repeat_penalty: 1.0
-          thinking_budget_tokens: 8192
-        "${MODEL_ID}:high":
-          chat_template_kwargs:
-            enable_thinking: true
-            preserve_thinking: true
-          temperature: 1.0
-          top_p: 0.95
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 1.5
-          repeat_penalty: 1.1
-          thinking_budget_tokens: 24576
-        "${MODEL_ID}:coding":
-          chat_template_kwargs:
-            enable_thinking: true
-            preserve_thinking: true
-          temperature: 0.6
-          top_p: 0.95
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 0.0
-          repeat_penalty: 1.0
-          thinking_budget_tokens: 8192
-        "${MODEL_ID}:coding-high":
-          chat_template_kwargs:
-            enable_thinking: true
-            preserve_thinking: true
-          temperature: 0.6
-          top_p: 0.95
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 0.0
-          repeat_penalty: 1.1
-          thinking_budget_tokens: 24576
-        "${MODEL_ID}:instruct":
-          chat_template_kwargs:
-            enable_thinking: false
-          temperature: 0.7
-          top_p: 0.8
-          top_k: 20
-          min_p: 0.0
-          presence_penalty: 1.5
-          repeat_penalty: 1.0
+      thinking_levels: [low, medium, xhigh]
+
+  "qwen3.8-27b:instruct":
+    cmd: >
+      ${llama-cli}
+        --model /app/models/Qwen/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q8_0.gguf
+        --ctx-size ${256k}
+        --batch-size 4096 --ubatch-size 1024
+        ${k-cache-q8}
+        ${v-cache-q8}
+        ${draft-k-cache-q4}
+        ${draft-v-cache-q4}
+        ${split-tensor}
+        ${spec-ngram-mtp}
+        --temperature 0.7
+        --top-p 0.80
+        --top-k 20
+        --min-p 0.0
+        --presence-penalty 1.5
+        --repeat-penalty 1.0
+        --reasoning off
+    ttl: 1800
+    metadata:
+      context_len: ${256k}
+      max_tokens: ${32k}
+      thinking: false
