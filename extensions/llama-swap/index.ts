@@ -10,9 +10,9 @@
  * the top-level "llama-swap" key and ignores "providers" entirely.
  */
 
-import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ProviderModelConfig, } from "@earendil-works/pi-coding-agent";
+import { ChatTemplateKwargValue, ThinkingLevelMap } from "@earendil-works/pi-ai";
 import { getBuiltinModel } from "@earendil-works/pi-ai/providers/all";
-import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
 import { readFile } from "node:fs/promises";
 
 // ── Config types ──────────────────────────────────────────────────────────────
@@ -29,9 +29,9 @@ interface FieldMapping {
   contextWindow?: string;
   maxTokens?:     string;
   reasoning?:     string;
+  reasoningLevels?: string;
   input?:         string;
   cost?:          CostMapping;
-  thinkingFormat?: string;
 }
 
 interface LlamaSwapConfig {
@@ -40,18 +40,7 @@ interface LlamaSwapConfig {
   fieldMapping?: FieldMapping;
 }
 
-const THINKING_FORMATS = new Set<NonNullable<OpenAICompletionsCompat["thinkingFormat"]>>([
-  "ant-ling",
-  "chat-template",
-  "deepseek",
-  "openai",
-  "openrouter",
-  "qwen",
-  "qwen-chat-template",
-  "string-thinking",
-  "together",
-  "zai",
-]);
+const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -89,12 +78,6 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
 
   const isPeer = dig(raw, "meta.llamaswap.peerID") !== undefined;
   const modelId = raw.id as string;
-  const configuredThinkingFormat = fm.thinkingFormat;
-  const thinkingFormat = configuredThinkingFormat && THINKING_FORMATS.has(
-    configuredThinkingFormat as NonNullable<OpenAICompletionsCompat["thinkingFormat"]>,
-  )
-    ? configuredThinkingFormat as NonNullable<OpenAICompletionsCompat["thinkingFormat"]>
-    : undefined;
 
   if (isPeer && modelId.split("/").length === 2) {
     // attempt to find the peer's ID in our existing model registry and apply those settings
@@ -118,10 +101,28 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
     }
   }
 
+  const chatTemplateKwargs: Record<string, ChatTemplateKwargValue> = {};
+  let supportsReasoningEffort = false;
+  let thinkingLevelMap: ThinkingLevelMap | undefined;
+
+  if (fm.reasoning) {
+    chatTemplateKwargs.thinking_enabled = { "$var": "thinking.enabled" };
+  }
+
+  const rawReasoningLevels = dig(raw, fm.reasoningLevels);
+  if (Array.isArray(rawReasoningLevels)) {
+    chatTemplateKwargs.reasoning_effort = { "$var": "thinking.effort" };
+    supportsReasoningEffort = true;
+    const availableLevels = new Set(rawReasoningLevels);
+    thinkingLevelMap = Object.fromEntries(
+      PI_THINKING_LEVELS.map((level) => [level, availableLevels.has(level) ? level : null]),
+    );
+  }
+
   return {
     id:            modelId,
     name:          (dig(raw, fm.name) as string | undefined) ?? raw.name ?? raw.id,
-    reasoning:     Boolean(dig(raw, fm.reasoning)) || true,
+    reasoning:     Boolean(dig(raw, fm.reasoning)),
     input,
     contextWindow: Number(dig(raw, fm.contextWindow)) || 128000,
     maxTokens:     Number(dig(raw, fm.maxTokens))     || 32768,
@@ -131,11 +132,13 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
       cacheRead:  Number(dig(raw, fm.cost?.cacheRead))  || 0,
       cacheWrite: Number(dig(raw, fm.cost?.cacheWrite)) || 0,
     },
+    thinkingLevelMap,
     compat: {
-      supportsDeveloperRole:   false,
-      supportsReasoningEffort: false,
-      maxTokensField:          "max_tokens",
-      thinkingFormat,
+      supportsDeveloperRole: false,
+      supportsReasoningEffort: supportsReasoningEffort,
+      maxTokensField: "max_tokens",
+      thinkingFormat: "chat-template",
+      chatTemplateKwargs,
     },
   };
 }

@@ -70,7 +70,6 @@ models:
       context_len: ${168k}
       max_tokens: ${32k}
       thinking: true
-      thinking_format: qwen-chat-template
     filters:
       setParamsByID:
         "${MODEL_ID}":
@@ -143,7 +142,6 @@ models:
       context_len: ${224k}
       max_tokens: ${32k}
       thinking: true
-      thinking_format: qwen-chat-template
     filters:
       setParamsByID:
         "${MODEL_ID}":

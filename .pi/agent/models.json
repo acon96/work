@@ -7,14 +7,13 @@
       "contextWindow": "meta.llamaswap.context_len",
       "maxTokens": "meta.llamaswap.max_tokens",
       "reasoning": "meta.llamaswap.thinking",
+      "reasoningLevels": "meta.llamaswap.thinking_levels",
       "cost": {
         "input": "meta.llamaswap.cost_input",
         "output": "meta.llamaswap.cost_output",
         "cacheRead": "meta.llamaswap.cost_cache_read",
         "cacheWrite": "meta.llamaswap.cost_cache_write"
-      },
-      "thinkingFormat": "meta.llamaswap.thinking_format"
+      }
     }
   }
 }
-
