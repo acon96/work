@@ -134,7 +134,7 @@ COPY pi-web-plugins/ /app/.pi-web-plugins-src/
 
 # Remove bundled info and workspace-tasks plugins (replaced by local versions),
 # then compile and install custom plugins from TypeScript.
-RUN PI_WEB_REPLACE_PLUGINS="info workspace-tasks" \
+RUN PI_WEB_REPLACE_PLUGINS="info workspace-tasks relays" \
     /usr/local/bin/build-plugins /app/.pi-web-plugins-src /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins
 
 # Pi Web configuration (pathAccess allows the scheduler history plugin to read
