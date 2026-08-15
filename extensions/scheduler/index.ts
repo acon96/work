@@ -555,7 +555,7 @@ export default function schedulerExtension(pi: ExtensionAPI) {
         // Convert arrays to comma-separated strings for storage
         const tools = params.tools ? params.tools.join(",") : undefined;
         const skills = params.skills ? params.skills.join(",") : undefined;
-        const model = params.model?.trim();
+        const modelReference = params.model?.trim();
         const ephemeralSession = params.ephemeralSession ?? false;
 
         if (!name) {
@@ -618,16 +618,23 @@ export default function schedulerExtension(pi: ExtensionAPI) {
           return { content: [{ type: "text", text: `Task '${name}' already exists.` }], details: {} };
         }
 
-        // Make sure the model exists if specified
-        if (model) {
-          const availableModels = ctx.modelRegistry.getAvailable();
-          const foundModel = availableModels.find((m) => m.id === model);
+        // Make sure the model exists
+        if (!modelReference) {
+          return { content: [{ type: "text", text: `Error: No model provided.` }], details: {} };
+        }
 
-          if (!foundModel) {
-            const similarModels = availableModels.filter((m) => m.id.includes(model));
-            const suggestion = similarModels.length > 0 ? ` Did you mean: ${similarModels.map((m) => m.id).join(", ")}?` : "";
-            return { content: [{ type: "text", text: `Error: model '${model}' not found.${suggestion}` }], details: {} };
-          }
+        if (modelReference.indexOf("/") == -1) {
+          return { content: [{ type: "text", text: `Error: model '${modelReference}' not found. Must provide full model name with provider as "<provider>/<model>".` }], details: {} };
+        }
+
+        const [provider, model] = modelReference.split("/");
+        const availableModels = ctx.modelRegistry.getAvailable();
+        const foundModel = availableModels.find((m) => m.provider == provider && m.id === model);
+
+        if (!foundModel) {
+          const similarModels = availableModels.filter((m) => m.id.includes(model));
+          const suggestion = similarModels.length > 0 ? ` Did you mean: ${similarModels.map((m) => m.provider + '/' + m.id).join(", ")}?` : "";
+          return { content: [{ type: "text", text: `Error: model '${model}' not found.${suggestion}` }], details: {} };
         }
 
         const task: TaskDefinition = {
@@ -638,7 +645,7 @@ export default function schedulerExtension(pi: ExtensionAPI) {
           created_at: Date.now(),
           tools,
           skills,
-          model,
+          model: `${provider}/${model}`,
           ephemeralSession,
         };
 
