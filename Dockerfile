@@ -146,6 +146,10 @@ RUN chown -R agent:agent /home/agent/.config
 # add default settings and models config (can be overridden by bind mounts in docker-compose.yml)
 COPY .pi/agent/settings.json /home/agent/.pi/agent/settings.json
 COPY .pi/agent/models.json /home/agent/.pi/agent/models.json
+# Supported global Pi system-prompt override. This is deliberately not bind
+# mounted, so the image ships the default prompt alongside its extensions.
+COPY .pi/agent/SYSTEM.md /home/agent/.pi/agent/SYSTEM.md
+RUN chown agent:agent /home/agent/.pi/agent/SYSTEM.md
 
 # Squid log directory (proxy user needs write access).
 RUN mkdir -p /var/log/squid && chown proxy:proxy /var/log/squid

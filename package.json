@@ -19,7 +19,8 @@
     "skills": [
       "skills/notify",
       "skills/superagent",
-      "skills/wiki-js"
+      "skills/wiki-js",
+      "skills/pi-harness"
     ]
   },
   "dependencies": {
