@@ -74,30 +74,16 @@ Query Strings and Headers are removed from all requests silently so do not attem
 Before attempting any HTTP request: consider whether it is a read-only GET/HEAD operation. If it is not, you will need to switch to allowlist mode using the network_mode tool. In allowlist mode, only requests to allowlisted domains are permitted, and mutating requests are allowed.
 `.trim();
 
-// ── shared (always-injected) section ──────────────────────────────────────────
-
-const SHARED_PROMPT = `
-## Operating Environment
-
-You are running as the **agent** user (uid 1001) inside a Docker container based on Node 24 LTS.
-
-### Sudo access
-Sudo access is restricted to a pre-determined allowlist.  Only the exact commands listed in the allowlist are permitted — wildcards are not used.
-
-### Python virtual environments
-Python tools that need external packages should use a virtual environment (python3 -m venv) rather than system-wide installs, because sudo apt-get is restricted. 
-
-`.trim();
-
 // ── extension ─────────────────────────────────────────────────────────────────
 
 function buildEnvironmentPrompt(): string {
 	const networkMode = loadRuntimeMode();
 
-	const networkSection =
-		networkMode === "open-get" ? OPEN_GET_MODE_PROMPT : buildAllowlistPrompt(loadProxyAllowlist());
+	if (networkMode === "open-get") {
+		return OPEN_GET_MODE_PROMPT;
+	} 
 
-	return [SHARED_PROMPT, networkSection].join("\n\n");
+	return buildAllowlistPrompt(loadProxyAllowlist());
 }
 
 export default function (pi: ExtensionAPI) {
