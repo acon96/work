@@ -2,6 +2,9 @@
 
 This document is for AI agents (and humans) doing further development on this repository.
 
+## General Behavior
+1. Do not use special symbols or non-standard Unicode characters because they can cause encoding issues. Prefer ASCII character art such as `->`.
+
 ---
 
 ## Repository layout
@@ -270,28 +273,6 @@ The GitHub Actions workflow at `.github/workflows/docker.yml` builds and pushes 
 The image is tagged with:
 - branch name (e.g. `main`)
 - git SHA prefix (`sha-abc1234`)
-
----
-
-## Testing checklist before merging
-
-- [ ] `docker compose build` completes without errors
-- [ ] `NETWORK_MODE=allowlist docker compose up` — verify squid blocks non-allowlisted domains
-- [ ] `NETWORK_MODE=open-get docker compose up` — verify only GET/HEAD pass; POST returns 403
-- [ ] `URL_REWRITE_ENABLED=true docker compose up` — verify URL rewrite program runs in Mode B
-- [ ] sudoers file is immutable (`lsattr /etc/sudoers` shows `i` flag with CAP_LINUX_IMMUTABLE)
-- [ ] unlisted sudo commands are blocked by sudoers (exit code 1, sudo error message)
-- [ ] scheduler extension creates tasks and supercronic executes them
-- [ ] scheduler-history pi-web plugin loads and displays run history in the web UI
-- [ ] scheduler-history plugin can read stdout/stderr logs (pathAccess.allowedPaths configured)
-- [ ] todo extension persists across session restart
-- [ ] pi-superagent extension loads and `/superagent models` lists available models
-- [ ] SearXNG container starts and responds on port 8080
-- [ ] `.pi/sessions` bind mount persists session data across container rebuilds
-- [ ] `.pi/scheduled` bind mount persists scheduler state across container rebuilds
-- [ ] Pi Web web server starts and responds on port 8504
-- [ ] Healthcheck passes for work container (squid, dnsmasq, pi-web, supercronic)
-- [ ] Healthcheck passes for searxng container
 
 ---
 

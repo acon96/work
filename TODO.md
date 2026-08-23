@@ -7,4 +7,7 @@
 - [x] background session renaming based on summary of the conversation (custom extension)
 - [x] Sudo enforcement via dynamically-generated immutable /etc/sudoers (allowlist converted at container startup, then chattr +i)
 - [x] need to persist the crontab file properly; right now it resets when the container restarts b/c it's in the agent home dir
-- [ ] fix scheduler again; it needs `provider/model` not just `model`. the current validation on create is broken
+- [x] fix scheduler again; it needs `provider/model` not just `model`. the current validation on create is broken
+- [x] implement kv cache stashing either in the llama-swap extension (based on https://github.com/Red4Hack/pi-llama-cpp) or putting it in llama-swap directly
+- [ ] send prompt processing progress via a "side-channel" in the SSE event stream (could also do model load progress this way)
+- [ ] fix the health check probes. the agent socket can crash and the web UI will still be up and never get restarted (container should restart)

@@ -4,8 +4,8 @@
   "defaultProjectTrust": "always",
   "compaction": {
     "enabled": true,
-    "reserveTokens": 16384,
-    "keepRecentTokens": 20000
+    "reserveTokens": 32768,
+    "keepRecentTokens": 49152
   },
   "retry": {
     "enabled": true,

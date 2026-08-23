@@ -3,6 +3,7 @@
   "llama-swap": {
     "baseUrl": "http://llama-swap:8080",
     "apiKey": "sk-none",
+    "slotCache": true,
     "fieldMapping": {
       "contextWindow": "meta.llamaswap.context_len",
       "maxTokens": "meta.llamaswap.max_tokens",

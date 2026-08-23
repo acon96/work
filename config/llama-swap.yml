@@ -22,7 +22,9 @@ macros:
       --no-webui
       --metrics
       --jinja
+      --slots
       --threads 32
+      --parallel 4
 
   10k: 10240
   16k: 16384
@@ -57,6 +59,7 @@ models:
   "qwen3.8-27b":
     cmd: >
       ${llama-cli}
+        --slot-save-path /app/kv-cache
         --model /app/models/Qwen/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q8_0.gguf
         --ctx-size ${256k}
         --batch-size 4096 --ubatch-size 1024
@@ -84,6 +87,7 @@ models:
   "qwen3.8-27b:instruct":
     cmd: >
       ${llama-cli}
+        --slot-save-path /app/kv-cache
         --model /app/models/Qwen/Qwen3.8-27B-GGUF/Qwen3.8-27B-Q8_0.gguf
         --ctx-size ${256k}
         --batch-size 4096 --ubatch-size 1024

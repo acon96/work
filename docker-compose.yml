@@ -113,6 +113,9 @@ services:
       - llama-swap
     volumes:
       - ./config/llama-swap.yml:/app/config.yml:ro
+      # llama.cpp writes one slot file per model and slot beneath this directory.
+      # Retain it across container recreation so Pi can restore KV cache state.
+      - llama-slot-cache:/app/kv-cache
     command: ["--config", "/app/config.yml"]
     ports:
       - 8080
@@ -121,4 +124,6 @@ services:
 # ── named volumes ──────────────────────────────────────────────────────────────
 volumes:
   searxng-data:
+    driver: local
+  llama-slot-cache:
     driver: local
