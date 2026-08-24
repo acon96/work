@@ -13,7 +13,7 @@ if ! pgrep -f "squid" > /dev/null 2>&1; then
 fi
 
 # Check dnsmasq (dns filtering) is still running
-if ! ss -ulnp 2>/dev/null | grep -q ':53 '; then
+if ! pgrep -f "dnsmasq" > /dev/null 2>&1; then
     echo "UNHEALTHY: dnsmasq process not running"
     EXIT_CODE=1
 fi
