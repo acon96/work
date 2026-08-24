@@ -61,6 +61,10 @@ interface SlotCacheResult {
 
 const PI_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 const EMPTY_SLOT_CACHE_RESULT: SlotCacheResult = { tokens: 0, slots: 0 };
+const MODEL_DISCOVERY_ATTEMPTS = 6;
+const MODEL_DISCOVERY_TIMEOUT_MS = 5_000;
+const MODEL_DISCOVERY_INITIAL_DELAY_MS = 1_000;
+const MODEL_DISCOVERY_MAX_DELAY_MS = 5_000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -71,6 +75,64 @@ function dig(obj: any, path: string | undefined): any {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function retryDelayMs(attempt: number): number {
+  return Math.min(
+    MODEL_DISCOVERY_INITIAL_DELAY_MS * (2 ** Math.max(0, attempt - 1)),
+    MODEL_DISCOVERY_MAX_DELAY_MS,
+  );
+}
+
+function isRetryableDiscoveryStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+async function discoverModels(baseUrl: string): Promise<any[]> {
+  const url = `${baseUrl}/v1/models`;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MODEL_DISCOVERY_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(MODEL_DISCOVERY_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        const error = new Error(`${response.status} ${response.statusText}`);
+        if (!isRetryableDiscoveryStatus(response.status)) throw error;
+        lastError = error;
+      } else {
+        const payload = await response.json() as { data?: unknown };
+        if (!Array.isArray(payload.data)) {
+          throw new Error("model endpoint returned an invalid data field");
+        }
+        if (payload.data.length === 0) {
+          throw new Error("model endpoint returned an empty catalog");
+        }
+        return payload.data;
+      }
+    } catch (error) {
+      lastError = error;
+      if (error instanceof Error && /^4\d\d /u.test(error.message)) throw error;
+    }
+
+    if (attempt < MODEL_DISCOVERY_ATTEMPTS) {
+      const waitMs = retryDelayMs(attempt);
+      console.warn(
+        `[llama-swap] Model discovery attempt ${attempt}/${MODEL_DISCOVERY_ATTEMPTS} failed: ` +
+        `${errorMessage(lastError)}; retrying in ${waitMs}ms`,
+      );
+      await delay(waitMs);
+    }
+  }
+
+  throw new Error(
+    `model discovery failed after ${MODEL_DISCOVERY_ATTEMPTS} attempts: ${errorMessage(lastError)}`,
+  );
 }
 
 function conversationSlotFilename(modelId: string, conversationId: string, idSlot: number): string {
@@ -388,11 +450,8 @@ export default async function llamaSwapExtension(pi: ExtensionAPI) {
   };
 
   try {
-    const res = await fetch(`${resolvedBaseUrl}/v1/models`);
-    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-
-    const { data } = (await res.json()) as { data: any[] };
-    const models = (data ?? []).map((m) => mapModel(m, fieldMapping));
+    const data = await discoverModels(resolvedBaseUrl);
+    const models = data.map((m) => mapModel(m, fieldMapping));
 
     pi.registerProvider("llama-swap", {
       name:    "llama-swap",
