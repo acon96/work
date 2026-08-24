@@ -177,9 +177,14 @@ if [[ -n "${LLAMA_SWAP_URL:-}" ]]; then
 fi
 
 # ── resolv.conf ──────────────────────────────────────────────────────────────
-# Save original upstream resolvers before we replace resolv.conf with
-# 127.0.0.1 (needed by dnsmasq open mode).
-cp /etc/resolv.conf /etc/resolv.conf.upstream 2>/dev/null || true
+# Save the original upstream resolvers before replacing resolv.conf with
+# 127.0.0.1. A Kubernetes container restart preserves the writable layer, so
+# /etc/resolv.conf may already contain our loopback override. Never overwrite a
+# valid saved upstream file with that value or dnsmasq will forward to itself.
+if [[ ! -s /etc/resolv.conf.upstream ]]; then
+    cp /etc/resolv.conf /etc/resolv.conf.upstream
+fi
+
 echo "nameserver 127.0.0.1" > /etc/resolv.conf
 
 # ── scheduler crontab ────────────────────────────────────────────────────────
