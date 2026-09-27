@@ -7,6 +7,11 @@ WORKSPACE="/workspace"
 HISTORY_FILE="$SCHEDULER_STATE_DIR/history.jsonl"
 MAX_RUNS="${SCHEDULER_HISTORY_MAX_RUNS:-200}"
 
+# Scheduled tasks are one-shot: pinning/stashing llama.cpp KV slots against
+# llama-swap buys nothing and just churns the server. Off by default; export
+# LLAMA_SWAP_SLOT_CACHE=on (or another truthy value) to override.
+export LLAMA_SWAP_SLOT_CACHE="${LLAMA_SWAP_SLOT_CACHE:-off}"
+
 log() { echo "[scheduler-run] $*" >&2; }
 
 if [[ $# -ne 1 ]]; then

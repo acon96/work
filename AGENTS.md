@@ -220,7 +220,7 @@ This file is bind-mounted into the container at `/home/agent/.pi/agent/settings.
 
 This file is bind-mounted into the container at `/home/agent/.pi/agent/models.json`.  It configures:
 - `providers`: custom provider configurations
-- `llama-swap`: llama-swap base URL, API key, and field mapping from llama-swap metadata to pi model properties
+- `llama-swap`: llama-swap base URL, API key, and field mapping from llama-swap metadata to pi model properties. The `slotCache` boolean here enables per-session KV cache stashing and stable llama.cpp slot assignment. To override it at runtime (e.g. to disable slot persistence for one-shot/automated runs), use the `LLAMA_SWAP_SLOT_CACHE` env var (`on`/`off`); it wins over this config value. `scripts/scheduler-run.sh` exports it as `off` by default so scheduled tasks never churn llama-swap's slot endpoints.
 
 ### SearXNG
 

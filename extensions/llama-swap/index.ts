@@ -2,6 +2,9 @@
  * llama-swap provider extension for pi.
  *
  * - LLAMA_SWAP_URL (env): base URL of your llama-swap instance.
+ * - LLAMA_SWAP_SLOT_CACHE (env): optional tri-state override for slot caching
+ *   (on/off). Wins over the models.json config, so automated or one-shot runs
+ *   (e.g. the scheduler) can disable KV slot persistence without editing it.
  * - models.json (top-level "llama-swap" key): fieldMapping that maps
  *   pi model properties to wherever you put them in each model's metadata
  *   block in llama-swap's config.yaml.
@@ -75,6 +78,22 @@ function dig(obj: any, path: string | undefined): any {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Parses LLAMA_SWAP_SLOT_CACHE into an explicit enable/disable override.
+ * Returns undefined when the variable is unset/blank so the models.json
+ * config value is used instead. This lets short-lived or automated runs
+ * (e.g. the scheduler) force slot caching off without editing models.json.
+ */
+function parseSlotCacheOverride(raw: string | undefined): boolean | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (value === "") return undefined;
+  if (["off", "0", "false", "no", "disable", "disabled"].includes(value)) return false;
+  if (["on", "1", "true", "yes", "enable", "enabled"].includes(value)) return true;
+  console.warn(`[llama-swap] Unrecognized LLAMA_SWAP_SLOT_CACHE value "${raw}", ignoring`);
+  return undefined;
 }
 
 function delay(ms: number): Promise<void> {
@@ -406,10 +425,15 @@ export default async function llamaSwapExtension(pi: ExtensionAPI) {
     fieldMapping = {},
     baseUrl,
     apiKey,
-    slotCache = false,
+    slotCache: configSlotCache = false,
   } = await loadConfig();
   const envBaseUrl = process.env.LLAMA_SWAP_URL?.trim().replace(/\/+$/, "");
   const envApiKey = process.env.LLAMA_SWAP_API_KEY?.trim();
+
+  // An explicit env var (e.g. "off" for scheduled/automated runs) takes
+  // precedence over the slotCache value in models.json.
+  const slotCacheOverride = parseSlotCacheOverride(process.env.LLAMA_SWAP_SLOT_CACHE);
+  const slotCache = slotCacheOverride ?? configSlotCache;
   
   if (!baseUrl && !envBaseUrl) {
     console.log("[llama-swap] LLAMA_SWAP_URL not set — skipping provider registration");
