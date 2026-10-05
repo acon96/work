@@ -218,7 +218,7 @@ if (!customElements.get("scheduler-history-view")) {
 // ── plugin definition ────────────────────────────────────────────────────────
 
 const plugin: PiWebPlugin = {
-  apiVersion: 2,
+  apiVersion: 4,
   name: "Scheduler History",
   activate: ({ html, svg }: { html: HtmlTemplateTag; svg: SvgTemplateTag }) => ({
     contributions: {

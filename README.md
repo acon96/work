@@ -8,41 +8,50 @@ A hardened Docker sandbox for "light" agentic development and research tasks, po
 
 ```mermaid
 graph TB
-    subgraph docker["Docker Compose Network"]
-        subgraph work["work container (Node 24 LTS)"]
-            pi["Pi Server<br/>(user: agent)<br/>bash, fs, tools<br/>extension hooks"]
-            squid["Squid Proxy<br/>:3128<br/><br/>Mode A: CONNECT-only<br/>to allowlisted domains<br/><br/>Mode B: GET/HEAD-only<br/>SSL bump, strip headers"]
-            dnsmasq["dnsmasq<br/>127.0.0.1<br/><br/>Mode A: default-deny<br/>Mode B: permissive"]
-            sudoers["/etc/sudoers<br/>(immutable)<br/>Generated from<br/>sudo-allowlist.txt"]
-            
-            pi -->|HTTP/HTTPS| squid
-            pi -->|DNS| dnsmasq
-            pi -.->|sudo calls| sudoers
-            squid -->|upstream| dnsmasq
+    subgraph compose["Container deployment"]
+        subgraph workc["work container (Node 24 LTS, uid 1001, no root/sudo)"]
+            pi["Pi Web + session daemon + Pi<br/>(user: agent)"]
+            ps["pi-sandbox: every Bash command runs in a<br/>bubblewrap jail: own netns, workspace-scoped writes,<br/>domain allowlist enforced by the sandbox broker"]
+            perm["pi-permission-system: human-prompt gates on<br/>file tools + out-of-CWD access, secrets denied"]
         end
-        
-        searxng["SearXNG<br/>:8080<br/>Metasearch Engine"]
-        llama["llama-swap<br/>:8080<br/>(optional)<br/>Dynamic Model<br/>Discovery"]
-        
-        pi -.->|search| searxng
-        pi -.->|models| llama
+        searxng["SearXNG<br/>same network"]
+        llama["llama-swap<br/>same network"]
+        gateway["nginx ui-gateway<br/>the only published port<br/>no state, no credentials"]
+
+        pi --> ps
+        pi --> perm
+        pi -.-> searxng
+        pi -.-> llama
+        gateway -->|"internal network"| pi
     end
-    
-    squid -->|filtered| internet((Internet))
-    dnsmasq -->|filtered| internet
+
+    browser(("browser")) -->|"Pi Web"| gateway
+
+    ps -->|"allowlisted hosts only"| internet((Internet))
+    pi -->|"model/API egress (not OS-sandboxed)"| internet
+    searxng -->|own searches| internet
 ```
 
 ### Security layers
 
-| Layer   | Mechanism                | Blocks                                                                                                                                    |
-|---------|--------------------------|-------------------------------------------------------------------------------------------------------------------------------------------|
-| OS      | Immutable `/etc/sudoers` | Non-allowlisted sudo commands (generated at startup, validated with `visudo -c`, protected by `chattr +i` and root:root 0440 permissions) |
-| Network | squid proxy (Mode A)     | All outbound except allowlisted HTTPS CONNECT                                                                                             |
-| Network | squid proxy (Mode B)     | POST/PUT/PATCH, query strings, sensitive headers                                                                                          |
-| DNS     | dnsmasq (Mode A)         | All non-allowlisted hostnames → `0.0.0.0`                                                                                                 |
-| OS      | Docker `cap_drop`        | `NET_RAW`, `NET_ADMIN`, `SYS_PTRACE`                                                                                                      |
-| OS      | Docker `cap_add`         | `LINUX_IMMUTABLE` (allows `chattr +i` on sudoers)                                                                                         |
-| OS      | Docker seccomp           | Unconfined (allows squid SSL interception)                                                                                                |
+| Layer          | Mechanism                                                                   | Blocks                                                                                                     |
+|----------------|------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
+| OS sandbox     | pi-sandbox wraps every Bash tool call in bubblewrap (mount + network namespaces, seccomp) | Bash writes outside the workspace; reads outside allowed regions; any network connection to non-allowlisted hosts |
+| Network        | pi-sandbox policy (`config/pi-sandbox-config.json`): static allow + per-connection human prompt | Direct sockets, DNS, and raw connections from sandboxed Bash; every non-baseline destination needs a human click |
+| Tool policy    | pi-permission-system allow/ask/deny with human prompts only (no authorizerChain) | Pi's native read/write/edit reaching outside the CWD; access to `.env`, keys, credentials, and the security configs themselves |
+| Network        | Only `ui-gateway` publishes a port; the agent's own UI network is internal   | Direct host-to-agent connections and any route the agent could gain through its UI port        |
+| OS             | uid/gid 1001, no sudo, no root, `cap_drop: ALL`, `no-new-privileges`         | Privilege escalation and OS package installation                                                              |
+| Runtime        | Health probes verify bwrap can create sandboxes, plus Pi Web and supercronic liveness | Silent loss of the sandbox substrate: a node that breaks user namespaces turns the stack unhealthy |
+
+Trust model (changed by the Squid removal): network enforcement moved from
+"infrastructure the agent cannot bypass" (separate proxy container,
+internal-only networks) to "extension that must be correctly loaded"
+(pi-sandbox). The Pi process itself is not OS-sandboxed -- its model calls and
+fetch tools use the container's normal egress. Sandbox integrity is verified
+by the container healthcheck, and the policy files are read-only bind mounts
+that both extensions also write-protect. The equivalent Kubernetes controls
+are a permissive-enough seccomp/AppArmor posture for user namespaces on the
+node, plus the same read-only config mounts.
 
 ---
 
@@ -55,11 +64,14 @@ graph TB
 
 ### 1. Build the image
 
+One image is built: the agent (`work-sandbox`). pi-sandbox and its native
+helpers (bubblewrap, socat, ripgrep) are baked in.
+
 ```bash
 docker compose build
 ```
 
-Or pull the pre-built image:
+Or pull the pre-built image (published by CI):
 
 ```bash
 docker pull ghcr.io/<owner>/work:main
@@ -67,39 +79,55 @@ docker pull ghcr.io/<owner>/work:main
 
 ### 2. Configure
 
-Edit `config/proxy-allowlist.txt` to add domains the agent needs to reach:
+Edit `config/pi-sandbox-config.json` -> `network.allowedDomains` to change the
+domains Bash may reach without prompting. Entries are exact domains,
+subdomain wildcards (`*.example.com`), and optional `:port` restrictions.
 
-```
-api.openai.com
-api.anthropic.com
-registry.npmjs.org
-github.com
-```
-
-Edit `config/sudo-allowlist.txt` to allow specific sudo commands (empty by default):
-
-```
-apt-get update
-apt-get install -y curl
-```
+The sandbox broker only evaluates public hostnames, so local service names
+(`searxng`, `llama-swap`) cannot be allowlisted; reach them through Pi's own
+tools (web_search, model providers), which run outside the Bash jail.
 
 ### 3. Run
 
-Provide any necessary environment variables (e.g., API keys) and start the container:
+The default Compose topology mirrors the production deployment: search and
+llama-swap are external services, only mutable runtime state is persisted, and
+Pi Web is published on host loopback. Configure public-safe example endpoints
+through `.env` and start the container:
 ```bash
-LLAMA_SWAP_URL=https://ai.example.com docker compose up
-ANTHROPIC_API_KEY=sk-... docker compose up
-OPENAI_API_KEY=sk-... docker compose up
-GIT_CREDENTIAL_HOST=github.com GIT_CREDENTIAL_USERNAME=oauth2 GIT_CREDENTIAL_PASSWORD=ghp_... docker compose up
+SEARXNG_URL=https://search.example.com \
+LLAMA_SWAP_URL=https://ai.example.com \
+docker compose up
 ```
 
-The system starts three processes inside the container:
-- **dnsmasq** — DNS filtering
-- **squid** — HTTP/HTTPS proxy  
-- **Pi Web** — Web UI and session daemon (ports 8504)
-- **Supercronic** — Cron scheduler for background tasks
+For a self-contained development stack, enable the optional local llama-swap
+service and point the agent at the Compose service names. Sandbox Bash access
+to them via `allowedDomains` entries (`searxng:8080`, `llama-swap:8080`):
 
-Open the Pi Web UI at **http://localhost:8504** and SearXNG at **http://localhost:8080**.
+```bash
+SEARXNG_URL=http://searxng:8080 \
+LLAMA_SWAP_URL=http://llama-swap:8080 \
+docker compose --profile llama-swap up
+```
+
+Production credentials should be supplied by the deployment platform. The
+public Compose file deliberately does not define repository-specific secret
+names. It mounts ignored `./secrets/git` and `./secrets/wiki` directories at
+the same generic in-container paths as the Kubernetes Secret volumes. Override
+their host locations with `GIT_SECRET_DIR` and `WIKI_SECRET_DIR`.
+
+The agent container runs three processes as uid 1001:
+
+- **Pi Web** — Web UI and session daemon (port 8504)
+- **Supercronic** — Cron scheduler for background tasks
+- **Pi sessions** — spawned by the session daemon
+
+Outbound HTTP/HTTPS from the Pi process uses the shared `agent-net` network
+directly; outbound from sandboxed Bash commands goes only through the
+pi-sandbox broker's policy proxy. SearXNG and llama-swap are reached on the
+same network.
+
+Open the Pi Web UI at **http://127.0.0.1:8504**. Local SearXNG, when enabled,
+is reachable from the agent at **http://searxng:8080**.
 
 ### Git HTTPS credentials
 
@@ -141,16 +169,21 @@ Pi Web provides a browser-based interface for interacting with the agent:
 2. **Workspaces** — For git repos, create worktrees; for non-git folders, use the project directly
 3. **Sessions** — Start chat sessions with Pi Coding Agent inside a workspace
 
-All chat history and session data persists in the `.pi/sessions` directory on the host (bind-mounted into the container).
+Chat history and session data persist in the `.pi/agent/sessions` directory on
+the host, bind-mounted into the container. The browser reaches Pi Web through
+the `ui-gateway` service (nginx); the agent container itself publishes no port,
+because an internal network cannot carry one.
 
 Use `/tools state` to see available tools, `/tools toggle <name>` to enable/disable tools, and other extension commands as needed.
 
 #### Optional: llama-swap
 
-llama-swap is an optional service for dynamic LLM model swapping. It is **disabled by default** and can be enabled in two ways:
+llama-swap is external by default. A local service is optional and disabled by default:
 
-**Option 1: Profile** (local llama-swap instance)
+**Option 1: Local service**
 ```bash
+SEARXNG_URL=http://searxng:8080 \
+LLAMA_SWAP_URL=http://llama-swap:8080 \
 docker compose --profile llama-swap up
 ```
 
@@ -158,18 +191,23 @@ docker compose --profile llama-swap up
 ```bash
 LLAMA_SWAP_URL=https://ai.example.com docker compose up
 ```
-When `LLAMA_SWAP_URL` is set, the work container will auto-trust the host in the proxy allowlist. Configure your pi models to point to this URL for dynamic model discovery.
+When `LLAMA_SWAP_URL` names a **remote** host, add it to
+`config/pi-sandbox-config.json` -> `allowedDomains` if Bash commands need to
+reach it. A local service name (no dot) is listed as `llama-swap:8080`.
+Configure your pi models to point to this URL for dynamic model discovery.
 
 ### Health Monitoring
 
 Docker healthchecks verify that all critical services are running:
 
 **Work Container** (checked every 30s):
-- ✅ Squid proxy listening on port 3128
-- ✅ dnsmasq DNS resolver listening on port 53
-- ✅ Pi Web session daemon socket exists
+- ✅ bwrap can create a sandbox (`bwrap --ro-bind / / --unshare-all --share-net true`) -- if this fails, pi-sandbox is silently degraded and the stack is UNHEALTHY
+- ✅ Pi Web session daemon socket exists and answers `/health`
 - ✅ Pi Web server listening on port 8504
 - ✅ Supercronic scheduler process running
+
+**UI gateway Container** (checked every 30s):
+- ✅ nginx answering on its internal port (which also proves the path to Pi Web works)
 
 **SearXNG Container** (checked every 30s):
 - ✅ HTTP endpoint responding on port 8080
@@ -181,7 +219,18 @@ docker inspect work --format='{{.State.Health.Status}}'
 docker compose ps                # Shows health status for all services
 ```
 
-If a service fails its healthcheck after 3 retries, Docker will restart the container automatically.
+Sandbox decisions are made by the pi-sandbox broker inside the agent
+container; its activity surfaces in the session (denied tool calls) and in the
+container logs. To confirm what policy is in force, read the mounted policy
+file:
+
+```bash
+docker compose exec work cat /home/agent/.pi/agent/extensions/pi-sandbox/config.json
+```
+
+In Kubernetes, the liveness probe restarts the failed container. Docker Compose
+reports an unhealthy status; its restart policy only acts when the container
+process exits, not merely when a healthcheck fails.
 
 ---
 
@@ -191,14 +240,16 @@ If a service fails its healthcheck after 3 retries, Docker will restart the cont
 
 | Variable              | Default               | Description                                                                             |
 |-----------------------|-----------------------|-----------------------------------------------------------------------------------------|
-| `NETWORK_MODE`        | `allowlist`           | `allowlist` — strict outbound control; `open-get` — all domains but GET/HEAD only       |
 | `WORKSPACE_DIR`       | `./agent-workspace`   | Host path mounted as `/workspace`                                                       |
-| `PI_WEB_PORT`         | `8504`                | Host port for the pi web UI                                                             |
-| `SEARXNG_URL`         | `http://searxng:8080` | SearXNG endpoint (internal Docker URL); set to a custom URL for external SearXNG        |
-| `URL_REWRITE_ENABLED` | `false`               | Enable optional URL query-string stripping in Mode B (uses `squid-url-rewrite.py`)      |
-| `PROXY_ALLOWLIST`     | —                     | Comma-separated domains; appended to `config/proxy-allowlist.txt` at runtime            |
-| `SUDO_ALLOWLIST`      | —                     | Comma-separated commands (without sudo prefix); appended to `config/sudo-allowlist.txt` at runtime      |
-| `LLAMA_SWAP_URL`      | —                     | External llama-swap URL for dynamic model discovery (auto-adds host to proxy allowlist) |
+| `PI_WEB_PORT`         | `8504`                | Host port for the pi web UI, published by the `ui-gateway` service                        |
+| `PI_WEB_BIND_ADDRESS` | `127.0.0.1`           | Host interface the UI port is published on; set to `0.0.0.0` to expose it on the LAN       |
+| `PI_WEB_HOST`         | `0.0.0.0`             | Address pi-web binds **inside** the agent container; keep `0.0.0.0` so `ui-gateway` can reach it |
+| `SEARXNG_URL`         | `https://search.example.com` | External SearXNG endpoint; use `http://searxng:8080` with the local-services profile |
+| `LLAMA_SWAP_URL`      | `https://ai.example.com` | llama-swap URL for dynamic model discovery; a local service name is reached directly     |
+| `PI_TITLE_MODEL`      | `llama-swap/little-titles` | Model used to generate session titles                                               |
+| `PI_SANDBOX_CONFIG`   | `/home/agent/.pi/agent/extensions/pi-sandbox/config.json` | Path the system-prompt extension reads to describe the active network policy |
+| `GIT_SECRET_DIR`      | `./secrets/git`       | Host directory mounted read-only at `/etc/secrets/git`                                  |
+| `WIKI_SECRET_DIR`     | `./secrets/wiki`      | Host directory mounted read-only at `/etc/secrets/wiki`                                 |
 | `GIT_CREDENTIAL_URLS` | —                     | Newline-separated full `.git-credentials` entries written at startup                      |
 | `GIT_CREDENTIAL_PROTOCOL` | `https`          | Protocol used when assembling a single git credential entry                               |
 | `GIT_CREDENTIAL_HOST` | —                     | Hostname for a single git HTTPS credential entry                                          |
@@ -208,13 +259,21 @@ If a service fails its healthcheck after 3 retries, Docker will restart the cont
 | `ANTHROPIC_API_KEY`   | —                     | Anthropic API key                                                                       |
 | `OPENAI_API_KEY`      | —                     | OpenAI API key                                                                          |
 
-### config/proxy-allowlist.txt
+### config/pi-sandbox-config.json
 
-One domain per line; subdomains are matched automatically.  Blank lines and `#` comments are ignored.  Used in Mode A (squid allowlist + dnsmasq default-deny).  Can be overridden at runtime via the `PROXY_ALLOWLIST` env var.
+pi-sandbox policy. Installed read-only at `~/.pi/agent/extensions/pi-sandbox/config.json`. The parser rejects unknown keys (fail closed), so the file contains no comments -- rationale lives here in the README. `network.allowedDomains` is the silent baseline (exact domains, `*.example.com` subdomain wildcards, optional `:port`); everything else prompts the human in the session UI once per connection. `subagents.provider: "off"` keeps subagent execution disabled; `hostIPC.mode: "off"` keeps host execution out of the picture. The model-backed reviewer (`pi-auto-review`) is NOT enabled -- with no reviewer broker registered, pi-sandbox falls through to its built-in interactive approval. Sandboxed commands cannot write this file (pi-sandbox write-protects it); edit on the host, new sessions pick up changes. No container restart needed.
 
-### config/sudo-allowlist.txt
+### config/pi-permission-system-config.json
 
-One command per line without the `sudo` prefix.  Empty by default.  At container startup, the entrypoint converts this file into `/etc/sudoers` Cmnd_Alias directives, then makes `/etc/sudoers` immutable with `chattr +i` so the agent cannot modify sudo permissions.  Commands not listed here are blocked by sudo itself.  Can be overridden at runtime via the `SUDO_ALLOWLIST` env var.
+pi-permission-system policy. Installed read-only at `~/.pi/agent/extensions/pi-permission-system/config.json`. No `authorizerChain` is configured, so every `ask` is an interactive human prompt in the session UI; no model-backed reviewer ever runs. `external_directory: "ask"` gates out-of-CWD file access; the `path` deny block protects `.env`, keys, git credentials, and the security configs themselves.
+
+### config/ui-gateway.conf
+
+The nginx server block for the Pi Web UI gateway. It is mounted into
+`ui-gateway` at `/etc/nginx/conf.d/default.conf` and is the only place a host
+address is published. Edit it to change timeouts, body limits, or the
+`X-Forwarded-*` headers; restart the gateway afterwards with
+`docker compose restart ui-gateway`.
 
 ### config/searxng-settings.yml
 
@@ -222,7 +281,9 @@ SearXNG configuration file.  Defines enabled search engines, safe-search level, 
 
 ### config/llama-swap.yml
 
-llama-swap configuration file.  Defines health check timeouts, log levels, server macros, and context-length shortcuts.  Mounted read-only into the llama-swap container when running via `--profile llama-swap`.
+llama-swap configuration file. Defines health check timeouts, log levels, server
+macros, and context-length shortcuts. Mounted read-only into the local
+llama-swap container when running with `--profile local-services`.
 
 ### config/agent.gitconfig
 
@@ -236,22 +297,24 @@ Default git configuration for the `agent` user.  Copied into the container at `/
 
 | Extension        | File                         | Purpose                                                                                                          |
 |------------------|------------------------------|------------------------------------------------------------------------------------------------------------------|
-| `pi-system-prompt` | `extensions/system-prompt.ts` | Injects sandbox environment details (network mode, proxy behaviour, sudo restrictions) into the agent system prompt |
-| `pi-network-mode`  | `extensions/network-mode.ts`  | `network_mode` tool + `/network` command for runtime sandbox mode switching (`allowlist` / `open-get`)            |
+| `pi-system-prompt` | `extensions/system-prompt.ts` | Injects sandbox environment details (active pi-sandbox allowlist, permission gates) into the agent system prompt |
 | `pi-tools`         | `extensions/tools.ts`         | `/tools` command; runtime enable/disable of individual tools; persists selection                                  |
 | `pi-scheduler`     | `extensions/scheduler.ts`     | `/task` command and tool; manage scheduled tasks via supercronic (cron for containers); persists to crontab file  |
 | `pi-todo`          | `extensions/todo.ts`          | `todo` tool; persistent todo list (add / complete / delete / list)                                               |
 | `pi-llama-swap`    | `extensions/llama-swap.ts`    | Llama-swap dynamic model discovery; field mapping from llama-swap metadata to pi model config                    |
 | `pi-superagent`    | `extensions/superagent.ts`    | Weak-model-gathers, strong-model-plans hybrid; single strong-model call for strategic planning                   |
 
-### Off-the-shelf extensions (loaded via `package.json` → `pi install`)
+### Off-the-shelf extensions (loaded via `package.json` dependencies + `packages` in settings)
 
 | Extension                        | Pinned Version | Purpose                                         |
 |----------------------------------|----------------|-------------------------------------------------|
-| `@earendil-works/pi-coding-agent` | `0.84.1`       | Pi Coding Agent core (SDK + runtime)            |
-| `@jmfederico/pi-web`             | `1.202608.1`   | Web UI and session daemon                       |
-| `@amartinr/pi-searxng`           | `1.0.3`        | SearXNG search integration                      |
-| `pi-lens`                        | `3.8.71`       | Code lens / language server integration         |
+| `@earendil-works/pi-coding-agent` | `1.0.4`        | Pi Coding Agent core (SDK + runtime), pi 1.x    |
+| `@jmfederico/pi-web`             | `1.202610.1`   | Web UI and session daemon (pi 1.x peers)        |
+| `@erichll/pi-sandbox`            | `0.24.0`       | bubblewrap sandboxing of Bash: network + filesystem policy (pi 1.x) |
+| `@gotgenes/pi-permission-system` | `39.1.0`       | allow/ask/deny gates on tools and paths, human prompts only (pi 1.x) |
+| `@amartinr/pi-searxng`           | `1.0.4`        | SearXNG search integration                      |
+| `pi-lens`                        | `3.8.71`       | Code lens / language server integration. **Not pi 1.x-ready**: latest release (4.3.0) still peers on pi-tui 0.84/0.85; loads an old bundled pi-tui. Drop or watch upstream |
+| `pi-smart-fetch`                 | `0.3.17`       | Fetch tool. Pre-1.0 (bundles pi-tui 0.82); same caveat as pi-lens |
 
 ### Commands
 
@@ -259,8 +322,6 @@ Custom commands provided by local extensions:
 
 | Command       | Extension         | Usage                                       | Description                                                    |
 |---------------|-------------------|---------------------------------------------|----------------------------------------------------------------|
-| `/network`    | `pi-network-mode` | `/network state`                            | Show the current runtime network mode and active squid/dnsmasq configs |
-|               |                   | `/network switch <allowlist|open-get>`      | Switch network mode at runtime without restarting the container |
 | `/tools`      | `pi-tools`        | `/tools state`                              | Show all tools and their enabled/disabled state                |
 |               |                   | `/tools toggle <name>`                      | Toggle a specific tool on or off                               |
 |               |                   | `/tools set <name1,name2,...>`              | Enable only the specified tools, disable all others            |
@@ -272,9 +333,10 @@ Custom commands provided by local extensions:
 
 ### Session persistence
 
-Session data is stored in `.pi/sessions` on the host, bind-mounted to `/home/agent/.pi/agent/sessions` inside the container. Global pi settings live at `.pi/agent/settings.json` (bind-mounted to `/home/agent/.pi/agent/settings.json`). Pi Web state lives at `.pi/web` (bind-mounted to `/home/agent/.pi/web`). All three directories persist across container rebuilds via bind mounts.
-
-Scheduler state is stored separately in `.pi/scheduled` on the host, bind-mounted to `/home/agent/.pi/scheduled`.
+Compose persists session, Pi Web, and scheduler state in the `work-sessions`,
+`work-web`, and `work-scheduled` named volumes. Global settings and models remain
+image-owned, matching the Kubernetes deployment. Kubernetes mounts the three
+state directories from dedicated PVC subpaths.
 
 ### Scheduler
 
@@ -380,39 +442,72 @@ Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) an
 
 ---
 
-## Network modes in detail
+## Network policy in detail
 
-### Mode A — Allowlist (default)
+### Sandbox network flow (pi-sandbox)
 
-- Squid listens on port 3128, accepts only `CONNECT` to allowlisted domains.
-- dnsmasq returns `0.0.0.0` for all domains by default; only allowlisted domains receive real DNS lookups (forwarded to upstream resolver from container's original resolv.conf).
-- Designed to prevent bulk data exfiltration and DNS-based exfiltration.
+Every Bash tool invocation runs inside a bubblewrap sandbox with its own
+mount and network namespaces. The sandbox's only network exit is the
+pi-sandbox broker's policy proxy, which evaluates each connection against
+`config/pi-sandbox-config.json`:
 
-### Mode B — Open-GET
+1. A matching `deniedDomains` entry rejects the connection.
+2. Otherwise a matching `allowedDomains` entry permits it silently.
+3. Otherwise the connection pauses and **the human is prompted in the session
+   UI**: "Sandbox approval required: connect <host>:<port>" with
+   "Allow this exact operation once" / "Deny". An approval applies to that
+   one connection; a new connection to the same host prompts again.
 
-- Squid performs TLS interception (SSL bump) using a build-time self-signed CA injected into the container's trust store.
-- Only `GET` and `HEAD` methods are forwarded; all others return `403`.
-- All request headers except a small safe set (`Host`, `Accept`, `Accept-Language`, `Accept-Encoding`, `User-Agent`, `Cache-Control`) are stripped.
-- Query strings are removed from all URLs before forwarding (optional, enabled via `URL_REWRITE_ENABLED=true`).
-- dnsmasq forwards all queries upstream.
-- Designed for read-only browsing/research with reduced header leakage.
+This is the dynamic replacement for the old open-GET ("mode B") convenience:
+new domains work immediately, but only a human clicking in the UI can open
+them, and only once per connection. No file edit, no reload, and no container
+restart is involved. Headless sessions (scheduler tasks) have no UI, so
+unmatched destinations there are denied -- schedule against `allowedDomains`.
 
-### Runtime mode switching
+Filesystem side of the same jail: writes outside the current workspace fail
+closed, reads outside allowed regions fail closed, common secrets (`.env`,
+`*.pem`, `*.key`, ...) are write-denied inside the workspace, and each command
+gets a private temp directory. The policy config itself is write-protected
+against sandboxed commands.
 
-The sandbox mode can be changed while the container is running:
+`allowedDomains` is the silent baseline; keep it to the hosts used by
+scheduled/headless tasks and high-frequency operations. Every allowlisted
+domain is a potential exfiltration endpoint, so keep the list narrow.
 
-- Tool: `network_mode`
-  - `{"action":"status"}`
-  - `{"action":"set","mode":"allowlist"}`
-  - `{"action":"set","mode":"open-get"}`
-- Command: `/network state` and `/network switch <allowlist|open-get>`
+The model-backed reviewer (`pi-auto-review`) ships as a dependency of
+pi-sandbox but is deliberately never enabled as an extension: pi-sandbox
+routes its network asks through a broker that only exists when pi-auto-review
+is loaded, and with no broker it falls through to the interactive human
+approval above. Do not add pi-auto-review to `packages` or to an
+`authorizerChain`.
 
-Implementation notes:
+### Human review of tool actions (pi-permission-system)
 
-- Privileged changes are delegated to `/usr/local/bin/network-mode` via sudo (explicitly allowlisted in `config/sudo-allowlist.txt`).
-- The script re-renders runtime dnsmasq/squid configs, validates them, restarts dnsmasq, and reconfigures squid in place.
-- Current mode is persisted to `/run/work/network-mode` and `/run/work/network-state.json`.
-- The `system-prompt` extension reads runtime mode state on each `before_agent_start`, so prompt injection always reflects the active mode.
+pi-permission-system is the second gate and the only reviewer in this stack is
+the human: no `authorizerChain` is configured, so no model-backed reviewer
+(`pi-permission-model-judge`, `pi-auto-review`) ever runs.
+
+- `external_directory: "ask"` -- any read/write/edit or Bash path outside the
+  session's CWD prompts in the session UI. This is what enforces per-workspace
+  folder usage for Pi's native file tools, which the Bash sandbox does not cover.
+- `path` deny block -- `.env` variants, keys, `~/.ssh/*`, git credentials, and
+  both security config files are denied across all tools at once, symlink-safe.
+- Bash command patterns -- `deny` on `sudo` and `rm -rf /` patterns; everything
+  else allowed (the OS sandbox governs what those commands can actually reach).
+
+### Residual trust
+
+Squid's removal moved enforcement from infrastructure to a pi extension:
+
+- If pi-sandbox fails to load, Bash runs unsandboxed. Mitigations: the policy
+  files are baked/bound read-only, `subagents.provider: "off"`, and the stack
+  should be treated as unhealthy if the sandbox extension is missing.
+- The Pi process itself (model calls, fetch tools, extensions) is not
+  OS-sandboxed and has normal container egress.
+- On Kubernetes, bwrap needs unprivileged user namespaces on the node
+  (AppArmor: bwrap profile or `kernel.apparmor_restrict_unprivileged_userns=0`)
+  and a seccomp profile that allows namespace creation. The container
+  healthcheck fails if sandboxing is broken.
 
 ---
 

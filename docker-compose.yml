@@ -1,23 +1,53 @@
+# -----------------------------------------------------------------------------
+# Single-agent topology. Squid and the whole external-proxy apparatus are gone:
+# outbound policy is now enforced INSIDE the work container by pi-sandbox,
+# which wraps every Bash tool invocation in a bubblewrap sandbox with its own
+# network namespace. Domains listed in config/pi-sandbox-config.json pass
+# silently; anything else prompts the human in the session UI once per
+# connection (the model-backed pi-auto-review reviewer is deliberately not
+# enabled). pi-permission-system gates Pi's native file tools with human
+# prompts.
+#
+#   work        the agent. Non-root, no sudo, no CA machinery. Also runs the
+#               pi-sandbox brokers and the Pi process itself.
+#   ui-gateway  nginx reverse proxy; the only host-facing service.
+#   searxng     metasearch; does its own outbound searching.
+#   llama-swap  optional local model serving (profile: llama-swap).
+#
+# Trust note: network enforcement moved from "infrastructure the agent cannot
+# bypass" (separate proxy pod, internal-only networks) to "extension that must
+# be correctly loaded" (pi-sandbox). The Pi process itself is not OS-sandboxed;
+# its fetches and model calls use `agent-net` directly. Keep `work` on no other
+# networks, and treat pi-sandbox config files as read-only policy inputs.
+# -----------------------------------------------------------------------------
+
 services:
-  # ─────────────────────────────────────────────────────────────────────────────
-  # work — the hardened pi sandbox
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ---------------------------------------------------------------------------
+  # work - the hardened pi sandbox
+  # ---------------------------------------------------------------------------
   work:
     build:
       context: .
       dockerfile: Dockerfile
     image: work-sandbox:latest
     container_name: work
-    depends_on:
-      - searxng
 
-    # ── volumes ────────────────────────────────────────────────────────────────
+    networks:
+      - frontend
+      - agent-net
+
+    depends_on:
+      searxng:
+        condition: service_started
+
+    # -- volumes --------------------------------------------------------------
     volumes:
-      # Persistent workspace shared with the host.
+      # Persistent workspace shared with the host. This is the agent's
+      # intentional writable blast radius.
       - type: bind
         source: ${WORKSPACE_DIR:-./agent-workspace}
         target: /workspace
-      # Pi global settings (all projects) — per pi.dev docs: ~/.pi/agent/settings.json
+      # Pi global settings (all projects) - per pi.dev docs: ~/.pi/agent/settings.json
       - type: bind
         source: .pi/agent/settings.json
         target: /home/agent/.pi/agent/settings.json
@@ -37,28 +67,29 @@ services:
       - type: bind
         source: .pi/web
         target: /home/agent/.pi/web
+      # Security policy files (baked into the image; bind-mounted here so the
+      # operator can change policy without a rebuild). Sandboxed commands cannot
+      # write these; reload the extension (or restart) to apply changes.
+      - type: bind
+        source: ./config/pi-sandbox-config.json
+        target: /home/agent/.pi/agent/extensions/pi-sandbox/config.json
+        read_only: true
+      - type: bind
+        source: ./config/pi-permission-system-config.json
+        target: /home/agent/.pi/agent/extensions/pi-permission-system/config.json
+        read_only: true
 
-    # ── ports ──────────────────────────────────────────────────────────────────
-    ports:
-      - "${PI_WEB_PORT:-8504}:8504"
+    # -- ports ----------------------------------------------------------------
+    # None, deliberately. `frontend` is an internal network, and Docker cannot
+    # publish a port on one. Host access to the UI goes through `ui-gateway`.
 
-    # ── environment ────────────────────────────────────────────────────────────
+    # -- environment ----------------------------------------------------------
     environment:
-      # "allowlist" (default) or "open-get"
-      NETWORK_MODE: ${NETWORK_MODE:-allowlist}
       # SearXNG search endpoint (set to "searxng" for docker-compose, or a URL)
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
-      # Enable optional URL filtering/rewrite addon for Mode B
-      URL_REWRITE_ENABLED: ${URL_REWRITE_ENABLED:-false}
-      # Proxy allowlist (can override the file with inline env var)
-      PROXY_ALLOWLIST: ${PROXY_ALLOWLIST:-}
-      # Sudo allowlist (can override the file with inline env var)
-      SUDO_ALLOWLIST: ${SUDO_ALLOWLIST:-}
       # Llama-swap URL (for dynamic model discovery).
       LLAMA_SWAP_URL: ${LLAMA_SWAP_URL:-}
       # Optional HTTPS git credentials written to /home/agent/.git-credentials at startup.
-      # Either provide GIT_CREDENTIAL_URLS as newline-separated full credential URLs,
-      # or provide the host/user/password tuple below.
       GIT_CREDENTIAL_URLS: ${GIT_CREDENTIAL_URLS:-}
       GIT_CREDENTIAL_PROTOCOL: ${GIT_CREDENTIAL_PROTOCOL:-https}
       GIT_CREDENTIAL_HOST: ${GIT_CREDENTIAL_HOST:-}
@@ -67,33 +98,80 @@ services:
       GIT_CREDENTIAL_PASSWORD: ${GIT_CREDENTIAL_PASSWORD:-}
       # Pi Web web server port
       PI_WEB_PORT: ${PI_WEB_PORT:-8504}
-      # Pi Web web server bind host (must be 0.0.0.0 inside the container so
-      # Docker's port mapping can reach it; restrict exposure via published ports)
+      # Pi Web web server bind host. Must be 0.0.0.0 inside the container so the
+      # ui-gateway on the internal frontend network can reach it.
       PI_WEB_HOST: ${PI_WEB_HOST:-0.0.0.0}
 
-    # ── security ───────────────────────────────────────────────────────────────
+    # -- security -------------------------------------------------------------
+    # The image default user is already uid 1001; stated here so the boundary is
+    # visible in the deployment definition. No cap_add: nothing privileged runs
+    # in this container.
+    user: "1001:1001"
     cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-      - SYS_PTRACE
-    cap_add:
-      - LINUX_IMMUTABLE  # Allows chattr +i on /etc/sudoers (defense-in-depth)
+      - ALL
     security_opt:
+      - no-new-privileges:true
+      # seccomp:unconfined is currently required for two things: node-pty /
+      # Pi Web terminal behaviour, and bwrap's namespace creation (clone3,
+      # unshare) under pi-sandbox. On Kubernetes, an equivalent permissive
+      # seccomp profile plus usable unprivileged user namespaces are required
+      # (on AppArmor-enforcing nodes: a bwrap profile, or
+      # kernel.apparmor_restrict_unprivileged_userns=0). The container
+      # healthcheck fails if bwrap cannot create a sandbox.
       - seccomp:unconfined
+
+    healthcheck:
+      test: ["CMD", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # searxng — open-source metasearch engine
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ---------------------------------------------------------------------------
+  # ui-gateway - nginx reverse proxy for the Pi Web UI
+  #
+  # The only host-facing service. `frontend` is internal, so the UI is reachable
+  # from the host through here and nowhere else. It carries no agent state, no
+  # credentials, and joins no egress network.
+  # ---------------------------------------------------------------------------
+  ui-gateway:
+    image: nginx:1.27-alpine
+    container_name: work-ui-gateway
+    networks:
+      - ui-edge
+      - frontend
+    ports:
+      # Bound to the host loopback by default: the UI is reachable at
+      # http://127.0.0.1:${PI_WEB_PORT:-8504} and on no other interface.
+      - "${PI_WEB_BIND_ADDRESS:-127.0.0.1}:${PI_WEB_PORT:-8504}:8080"
+    volumes:
+      - ./config/ui-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      work:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # searxng - open-source metasearch engine
+  # ---------------------------------------------------------------------------
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
+    networks:
+      - agent-net
     volumes:
       - searxng-data:/etc/searxng
       - ./config/searxng-settings.yml:/etc/searxng/settings.yml:ro
-    ports:
-      - 8080
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/healthz"]
       interval: 30s
@@ -102,26 +180,44 @@ services:
       start_period: 10s
     restart: unless-stopped
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # llama-swap — dynamic LLM model swapping (disabled by default)
+  # ---------------------------------------------------------------------------
+  # llama-swap - dynamic LLM model swapping (disabled by default)
   # Start with: docker compose --profile llama-swap up
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ---------------------------------------------------------------------------
   llama-swap:
     image: ghcr.io/mostlygeek/llama-swap:latest
     container_name: llama-swap
     profiles:
       - llama-swap
+    networks:
+      - agent-net
     volumes:
       - ./config/llama-swap.yml:/app/config.yml:ro
       # llama.cpp writes one slot file per model and slot beneath this directory.
       # Retain it across container recreation so Pi can restore KV cache state.
       - llama-slot-cache:/app/kv-cache
     command: ["--config", "/app/config.yml"]
-    ports:
-      - 8080
     restart: unless-stopped
 
-# ── named volumes ──────────────────────────────────────────────────────────────
+# -- networks -----------------------------------------------------------------
+networks:
+  # Host-facing. Only the UI gateway is attached, and it is the only service
+  # with published ports.
+  ui-edge:
+    driver: bridge
+  # Gateway <-> agent. Internal, so the agent can never be reached from or
+  # reach the host network stack directly.
+  frontend:
+    internal: true
+  # Agent + internal dependencies. Egress-capable: the pi-sandbox broker and
+  # the Pi process itself need direct egress; sandboxed Bash commands do NOT
+  # (they get a private network namespace whose only exit is the broker's
+  # policy proxy). On Kubernetes, this maps to a single Pod network with egress
+  # NetworkPolicy scoped per-pod, not per-process.
+  agent-net:
+    driver: bridge
+
+# -- named volumes ------------------------------------------------------------
 volumes:
   searxng-data:
     driver: local

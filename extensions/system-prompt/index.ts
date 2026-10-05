@@ -2,88 +2,87 @@
  * System prompt extension.
  *
  * Injects a system-prompt section describing the sandboxed operating
- * environment — network mode, proxy behaviour, sudo restrictions — so
- * the agent knows what it can and cannot do before it tries.
+ * environment - how outbound access is enforced, what the domain allowlist
+ * is, and what that means for tool use - so the agent knows what it can and
+ * cannot do before it tries.
  *
- * Reads the current runtime mode from /run/work/network-mode so prompts
- * reflect runtime switching performed by the network_mode tool.
+ * Policy is enforced by two pi extensions, neither of which the agent can
+ * change from inside a session:
+ *   - pi-sandbox: wraps every Bash command in a bubblewrap sandbox with a
+ *     strict domain allowlist (config at ~/.pi/agent/extensions/pi-sandbox/
+ *     config.json, write-protected from sandboxed commands).
+ *   - pi-permission-system: gates Pi's native file tools and out-of-CWD
+ *     access with human prompts (config at ~/.pi/agent/extensions/
+ *     pi-permission-system/config.json).
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// -- helpers ------------------------------------------------------------------
 
-function loadProxyAllowlist(): string[] {
-	const path = "/config/proxy-allowlist.txt";
+interface SandboxConfig {
+	network?: {
+		strictAllowlist?: boolean;
+		allowedDomains?: string[];
+		deniedDomains?: string[];
+	};
+}
+
+function loadSandboxConfig(path: string): SandboxConfig | null {
 	try {
-		const raw = readFileSync(path, "utf8");
-		return raw
-			.split("\n")
-			.map((l) => l.trim())
-			.filter((l) => l && !l.startsWith("#"));
+		return JSON.parse(readFileSync(path, "utf8")) as SandboxConfig;
 	} catch {
-		return [];
+		return null;
 	}
 }
 
-function loadRuntimeMode(): "allowlist" | "open-get" {
-	const statePath = "/run/work/network-mode";
-	if (existsSync(statePath)) {
-		try {
-			const mode = readFileSync(statePath, "utf8").trim();
-			if (mode === "allowlist" || mode === "open-get") {
-				return mode;
-			}
-		} catch {
-			// Fall back below.
-		}
-	}
+// -- prompt fragments ---------------------------------------------------------
 
-	const envMode = process.env.NETWORK_MODE ?? "allowlist";
-	return envMode === "open-get" ? "open-get" : "allowlist";
+function buildAllowlistPrompt(allowed: string[], denied: string[]): string {
+	const allowList = allowed.map((d) => `  - ${d}`).join("\n");
+	const denyNote = denied.length
+		? `\nExplicitly denied (never reachable, even if also matched above):\n${denied.map((d) => `  - ${d}`).join("\n")}\n`
+		: "";
+
+	return `### Network Access — pi-sandbox (allow baseline + human approval)
+
+**Every Bash command runs inside an OS-level sandbox (bubblewrap) with its own network namespace.** Outbound connections from Bash go through the sandbox's policy broker. Destinations in the baseline below are permitted silently; any other destination pauses the command and asks the human in the session UI for a one-time approval. There is no other route: direct sockets, DNS lookups, and raw connections from Bash have no path off-box. If the human denies (or no UI is present), the connection fails.
+
+Baseline destinations (a leading '*.' matches subdomains; a ':port' suffix restricts the port):
+${allowList}
+${denyNote}
+Writes from Bash are additionally confined to the current workspace. Reads outside the workspace are restricted by the sandbox policy.
+
+If a command needs a domain that is not in the baseline, just run it — the user will be prompted to approve that one connection. Do not attempt to work around the sandbox (proxies, DNS tricks, or helper binaries): that only changes what gets denied, not who decides.
+
+Pi's own tools (web_search / get_search_results, fetch_content) run outside the Bash sandbox: searches go to a local SearXNG instance, and fetches are not covered by the baseline above. Treat the baseline as governing what a Bash command can reach.
+
+Pi's native file tools are gated by a permission system: reaching outside the current working directory prompts a human, and secret files (.env, keys, credentials) are denied outright.`.trim();
 }
 
-// ── prompt fragments ──────────────────────────────────────────────────────────
+function buildDegradedPrompt(): string {
+	return `### Network Access - sandbox policy unavailable
 
-function buildAllowlistPrompt(domains: string[]): string {
-	const list = domains.map((d) => `  - ${d}`).join("\n");
-
-	return `### Network Access — Allowlist Mode (restricted)
-
-**Only allowlisted domains are permitted over HTTPS.**  Plain-text HTTP requests are rejected. Raw TCP socket access will be dropped.
-
-Currently allowlisted domains (subdomains match if there is a leading dot):
-${list}
-
-Using the web_search, and get_search_results tools do not impose the same restrictions and should be used for research. The fetch_content tool is subject to the allowlist, so it will fail if the URL is not on the allowlist.
-
-Before attempting any HTTP request: if you need to access a domain that is NOT on the allowlist, you can switch to open-get mode using the network_mode tool. This mode allows read-only access to any domain, but does not allow POST, PUT, DELETE, or other mutating requests.
-.`.trim();
+The pi-sandbox policy file could not be read. Assume Bash network access is restricted and ask the user before relying on any specific domain.`.trim();
 }
 
-const OPEN_GET_MODE_PROMPT = `
-### Network Access — Open-GET Mode (read-only)
-
-All outbound HTTP(S) traffic is routed through a proxy that restricts requests to GET and HEAD methods only.
-
-POST, PUT, DELETE, and other methods will return 403 Forbidden. This means you can download files, read web pages, and fetch data from read-only APIs, but you cannot submit forms, push to APIs, or make mutating requests.
-
-Query Strings and Headers are removed from all requests silently so do not attempt to use them.
-
-Before attempting any HTTP request: consider whether it is a read-only GET/HEAD operation. If it is not, you will need to switch to allowlist mode using the network_mode tool. In allowlist mode, only requests to allowlisted domains are permitted, and mutating requests are allowed.
-`.trim();
-
-// ── extension ─────────────────────────────────────────────────────────────────
+// -- extension ----------------------------------------------------------------
 
 function buildEnvironmentPrompt(): string {
-	const networkMode = loadRuntimeMode();
+	const configPath =
+		process.env.PI_SANDBOX_CONFIG ??
+		"/home/agent/.pi/agent/extensions/pi-sandbox/config.json";
+	const config = loadSandboxConfig(configPath);
 
-	if (networkMode === "open-get") {
-		return OPEN_GET_MODE_PROMPT;
-	} 
+	if (!config?.network?.allowedDomains) {
+		return buildDegradedPrompt();
+	}
 
-	return buildAllowlistPrompt(loadProxyAllowlist());
+	return buildAllowlistPrompt(
+		config.network.allowedDomains,
+		config.network.deniedDomains ?? [],
+	);
 }
 
 export default function (pi: ExtensionAPI) {

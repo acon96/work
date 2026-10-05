@@ -11,9 +11,10 @@ This document is for AI agents (and humans) doing further development on this re
 
 ```
 work/
-├── Dockerfile                   Main container image (Node 24 LTS)
-├── docker-compose.yml           Compose config (work + searxng + optional llama-swap)
-├── package.json                 Pinned pi-extensions dependencies
+├── Dockerfile                   Agent image (Node 24 LTS); uid 1001, no root/sudo/proxy;
+│                                includes bubblewrap/socat/ripgrep for pi-sandbox
+├── docker-compose.yml           Compose: work + ui-gateway + searxng (+ llama-swap)
+├── package.json                 Pinned pi-extensions dependencies (pi 1.x)
 ├── .pi/
 │   ├── agent/
 │   │   ├── settings.json        pi global settings (default provider, extensions, packages)
@@ -23,25 +24,20 @@ work/
 │   └── web/                     Pi Web state (bind-mounted)
 ├── config/
 │   ├── agent.gitconfig          Default git config for agent user
-│   ├── proxy-allowlist.txt      User-editable proxy domain allowlist (Mode A)
-│   ├── sudo-allowlist.txt       User-editable sudo command allowlist
-│   ├── squid-allowlist.conf     Squid config rendered for Mode A
-│   ├── squid-open-get.conf      Squid config rendered for Mode B
-│   ├── dnsmasq-allowlist.conf   dnsmasq config for Mode A (default-deny)
-│   ├── dnsmasq-open.conf        dnsmasq config for Mode B (permissive)
+│   ├── pi-sandbox-config.json   pi-sandbox policy: domain baseline + human approval, subagents off
+│   ├── pi-permission-system-config.json
+│   │                            pi-permission-system policy: human prompts, no authorizerChain
+│   ├── ui-gateway.conf          nginx server block: the only published port in the stack
 │   ├── searxng-settings.yml     SearXNG search engine configuration
 │   └── llama-swap.yml           llama-swap service configuration
 ├── scripts/
-│   ├── entrypoint.sh            Container start-up script
-│   ├── network-mode.sh          Runtime network mode switcher (reloads dnsmasq/squid)
-│   ├── healthcheck.sh           Docker healthcheck script
+│   ├── entrypoint.sh            Agent start-up as uid 1001: sessiond, supercronic
+│   ├── healthcheck.sh           Docker healthcheck: verifies bwrap can create sandboxes
 │   ├── build-plugins.sh         Compiles TypeScript pi-web plugins to JS during Docker build
-│   ├── scheduler-run.sh         Cron job wrapper: decodes task, runs pi, persists diagnostics
-│   └── squid-url-rewrite.py     URL rewrite helper (strips query strings, Mode B)
+│   └── scheduler-run.sh         Cron job wrapper: decodes task, runs pi, persists diagnostics
 ├── extensions/
 │   ├── chat-titles/            pi extension: auto-generates concise session titles from first user prompt
 │   ├── system-prompt/           pi extension: injects sandbox env details into system prompt
-│   ├── network-mode/            pi extension: runtime network mode status/switch tool + /network
 │   ├── llama-swap/              pi extension: llama-swap dynamic model discovery + field mapping
 │   ├── scheduler/               pi extension: scheduled tasks via supercronic
 │   ├── todo/                    pi extension: persistent todo list
@@ -52,19 +48,19 @@ work/
 │   └── wiki-js/                 pi skill: operational workflow for Wiki.js page/asset/nav management
 ├── pi-web-plugins/              Pi Web plugin overrides (merged into npm package dist)
 │   └── scheduler-history/       Pi Web plugin: workspace panel for scheduled run history
-└── .github/workflows/docker.yml CI/CD: build & publish image on push to main
+└── .github/workflows/docker.yml CI/CD: builds & publishes agent + proxy images
 ```
 
 ---
 
 ## Core invariants — never violate these
 
-1. **There is only one runtime user: `agent` (uid 1001).** Never create additional users (`work`, `node`, etc.) for runtime use. Use `root` or `gosu root` only for privileged build steps.
-2. **All outbound traffic from the container is routed through squid (port 3128).** Do not add firewall rules or iptables that bypass this.
-3. **Sudo commands are enforced by dynamically-generated `/etc/sudoers`** — at startup, the entrypoint converts `/config/sudo-allowlist.txt` into sudoers Cmnd_Alias directives, validates it with `visudo -c`, then attempts `chattr +i` to make it immutable (requires `CAP_LINUX_IMMUTABLE`). The file is already protected by Unix permissions (root:root 0440), so the immutable flag is defense-in-depth.
-4. **Mode A (allowlist)** is the secure default. Mode B (open-GET) trades security for convenience — never make Mode B the default.
-5. **The squid MITM CA private key is generated at first startup** and never exported. Do not add steps that print or persist `/etc/squid/ssl-ca.key`.
-6. **Session data persists via bind mounts** at `/home/agent/.pi/agent/sessions` (from `.pi/sessions`), `/home/agent/.pi/agent/settings.json` (from `.pi/agent/settings.json`), and `/home/agent/.pi/web` (from `.pi/web`). Never hardcode paths to non-persistent locations.
+1. **There is only one runtime user: `agent` (uid 1001), and the agent container runs as it.** `USER agent` is set in the image and `user: "1001:1001"` in Compose. There is no sudo, no gosu, no root entrypoint, and no `CAP_*` on the agent container.
+2. **Host access to the UI goes only through `ui-gateway` (nginx)**, the only service with published ports; it joins `ui-edge` + `frontend` and holds no agent state, no credentials, and no agent network access. Never add `ports:` to `work`; `frontend` stays `internal: true`.
+3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure or env vars.** `config/pi-sandbox-config.json` is the single policy source of truth, installed at `~/.pi/agent/extensions/pi-sandbox/config.json` (read-only bind mount; pi-sandbox also write-protects it against sandboxed commands). `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
+4. **Tool/file policy is enforced by pi-permission-system.** `config/pi-permission-system-config.json` (installed at `~/.pi/agent/extensions/pi-permission-system/config.json`, read-only) configures human prompts only: no `authorizerChain`, so no model-backed reviewer ever runs. Keep `external_directory: ask` and the secret-file `deny` block.
+5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs `bwrap --ro-bind / / --unshare-all --share-net /bin/true`; if user namespaces, seccomp, or AppArmor on the host/node block that, the stack reports unhealthy rather than running unenforced. On Kubernetes nodes this requires usable unprivileged user namespaces (on AppArmor-enforcing nodes: a bwrap profile, or `kernel.apparmor_restrict_unprivileged_userns=0`) and a permissive-enough seccomp profile.
+6. **Session data persists via bind mounts** at `/home/agent/.pi/agent/sessions` (from `.pi/agent/sessions`), `/home/agent/.pi/agent/settings.json` (from `.pi/agent/settings.json`), and `/home/agent/.pi/web` (from `.pi/web`). Never hardcode paths to non-persistent locations.
 
 ---
 
@@ -161,33 +157,105 @@ The `scheduler-history` plugin reads execution logs from `/home/agent/.pi/schedu
 
 ---
 
-## Docker & proxy
+## Docker & sandboxing
+
+### Topology
+
+| Network       | Egress? | Attached to                              |
+|---------------|---------|------------------------------------------|
+| `ui-edge`     | yes (host-facing) | `ui-gateway` only; the only service with published ports |
+| `frontend`    | no (`internal: true`) | `work`, `ui-gateway` (Pi Web ingress only) |
+| `agent-net`   | yes     | `work`, `searxng`, `llama-swap`          |
+
+Squid and the separate proxy container are gone. Network policy for Bash is
+enforced per-command inside `work` by pi-sandbox (bubblewrap network
+namespaces + policy broker). The Pi process itself and the pi-sandbox broker
+use `agent-net` directly; sandboxed Bash commands get a private namespace
+whose only exit is the broker's policy proxy.
+
+Docker cannot publish a container port on an `internal: true` network, so the UI
+path is `ui-edge` (published) -> `ui-gateway` (nginx) -> `frontend` ->
+`work:8504`. Keep it that way: adding `ports:` to `work` requires making
+`frontend` non-internal, which hands the agent a host-facing interface.
+
+### Runtime requirements for pi-sandbox
+
+- `bubblewrap`, `socat`, `ripgrep` installed in the image (see Dockerfile).
+- Unprivileged user namespaces usable inside the container: keep
+  `seccomp:unconfined` (or an equivalent profile allowing `unshare`/`clone3`),
+  and on AppArmor-enforcing Kubernetes nodes install a bwrap profile or set
+  `kernel.apparmor_restrict_unprivileged_userns=0`.
+- The container healthcheck fails if `bwrap --ro-bind / / --unshare-all
+  --share-net /bin/true` cannot run, so a node that breaks sandboxing shows up
+  as unhealthy rather than silently unenforced.
 
 ### Adding an allowlisted domain
 
-Append to `config/proxy-allowlist.txt`. The entry must be a bare domain (e.g. `pypi.org`); squid's `dstdomain` ACL automatically matches subdomains.  The entrypoint also appends a `server=/<domain>/8.8.8.8` dnsmasq directive so DNS resolves correctly in Mode A.
+Two ways:
 
-Alternatively, pass the allowlist inline via the `PROXY_ALLOWLIST` env var (comma-separated domains).
+1. **Per-connection (default flow):** Bash reaching a domain that is not in
+   `network.allowedDomains` prompts the human in the session UI ("Allow this
+   exact operation once" / "Deny"). The approval covers that one
+   hostname:port connection; a new connection prompts again. No file edit and
+   no reload needed. Sessions without UI (scheduler tasks) are denied.
+2. **Permanent baseline:** edit `config/pi-sandbox-config.json` ->
+   `network.allowedDomains`. Entries are exact domains, strict-subdomain
+   wildcards (`*.example.com` -- note this does NOT match the apex domain),
+   and optional `:port` restrictions. The file is a read-only bind mount:
+   edit it on the host, then start a new session (pi loads config at
+   extension registration; there is no hot reload). No container restart is
+   required.
 
-### Adding an allowlisted sudo command
+The broker only evaluates **public** hostnames (names with a dot, resolving
+outside private/loopback ranges). Sandbox-ed Bash therefore can never reach
+service names like `searxng` or `llama-swap` -- those must go through Pi's own
+tools (web_search, model providers), which run outside the Bash jail. If a
+Bash command genuinely needs an internal service, that is a design decision
+to make explicitly, not an allowlist edit.
 
-Append the command (without `sudo` prefix) to `config/sudo-allowlist.txt`, e.g.:
+### Changing policy (operator only)
+
+Policy lives in the two read-only bind mounts under
+`/home/agent/.pi/agent/extensions/`. There is deliberately no agent-side
+control path (no tool, no slash command, no script in the agent image); do not
+add one back. Keep `subagents.provider: "off"` and `hostIPC.mode: "off"`.
+
+The network review chain is: static deny -> static allow -> human prompt.
+The model-backed reviewer (`pi-auto-review`) is intentionally never enabled:
+do not add it to `packages` in settings.json or to `authorizerChain` in the
+pi-permission-system config. With no reviewer broker registered, pi-sandbox's
+`approval.ts` falls through to its built-in interactive UI prompt. Setting
+`network.strictAllowlist: true` would skip the human prompt and deny
+everything unmatched -- use only for locked-down one-shot runs.
+
+### Containment checks
+
+Run these after any topology, image, or policy change. Note these checks are
+run via `docker compose exec`, i.e. OUTSIDE a Pi Bash tool call, so they test
+the container, not the pi-sandbox broker. To test pi-sandbox itself, run the
+same probes from inside a Pi session's Bash tool.
+
+```bash
+# expected to succeed from the Pi process (egress exists for the container)
+docker compose exec work curl -sS -o /dev/null -w '%{http_code}\n' https://api.anthropic.com/
+
+# inside a Pi Bash tool: allowlisted domain succeeds; anything else raises a
+# human approval prompt in the session UI ("Allow this exact operation once")
+#   curl -sS -o /dev/null -w '%{http_code}' https://api.anthropic.com/   -> 200/4xx
+#   curl -sS -o /dev/null -w '%{http_code}' https://example.com          -> denied
+
+# expected: writes outside the workspace from a Bash tool fail
+#   touch /etc/test -> denied; touch /home/agent/test -> denied
+
+# expected: uid 1001, no sudo, no capabilities
+docker compose exec work sh -c 'id -u; command -v sudo || echo "no sudo"'
+
+# expected: healthcheck goes UNHEALTHY if bwrap cannot sandbox
+docker compose exec work healthcheck
 ```
-apt-get install -y curl
-```
 
-Alternatively, pass the allowlist inline via the `SUDO_ALLOWLIST` env var (comma-separated commands).
-
-### Switching network modes
-
-Set `NETWORK_MODE=open-get` via environment variable (docker-compose or docker run `-e`).
-
-For runtime switching without container restart, use the `network_mode` tool or `/network` command.
-These call `/usr/local/bin/network-mode` through sudo (must be allowlisted in `config/sudo-allowlist.txt`).
-
-### Enabling URL rewriting (Mode B)
-
-Set `URL_REWRITE_ENABLED=true` via environment variable. This appends `url_rewrite_program` directives to the Mode B squid config at runtime.
+Passing these in Compose demonstrates the data path. It is **not** evidence that
+Kubernetes NetworkPolicy works; the cluster needs the same checks re-run.
 
 ---
 
@@ -200,7 +268,7 @@ Set `URL_REWRITE_ENABLED=true` via environment variable. This appends `url_rewri
 
 Current `package.json` includes:
 
-- Extensions: `system-prompt`, `network-mode`, `scheduler`, `todo`, `llama-swap`, `superagent`, `chat-titles`.
+- Extensions: `system-prompt`, `scheduler`, `todo`, `llama-swap`, `superagent`, `chat-titles`.
 - Skills: `notify`, `superagent`. `wiki-js`
 
 ### package.json
@@ -234,12 +302,19 @@ Pi Web is a web control plane for Pi Coding Agent with a split-process architect
 - **Session daemon** (`pi-web-sessiond`): owns active Pi session runtimes, listens on Unix socket at `~/.pi-web/sessiond.sock`
 - **Web server** (`pi-web-server`): serves the API and browser UI, defaults to `127.0.0.1:8504`
 
+In this deployment the web server binds `0.0.0.0:8504` **inside the agent
+container**, which is safe only because that container sits on internal
+networks. Browsers reach it through `ui-gateway` (nginx, `config/ui-gateway.conf`),
+which is the only published port in the stack and pins to the host loopback by
+default (`PI_WEB_BIND_ADDRESS`). Do not change the bind host back to
+`127.0.0.1` inside the container: the gateway could no longer connect.
+
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `PI_WEB_PORT` / `PORT` | `8504` | Web server port |
-| `PI_WEB_HOST` | `127.0.0.1` | Web server bind host (use `0.0.0.0` to bind all interfaces) |
+| `PI_WEB_HOST` | `127.0.0.1` | Web server bind host; this stack sets it to `0.0.0.0` so the gateway can connect (host-side exposure is the gateway's `PI_WEB_BIND_ADDRESS`) |
 | `PI_WEB_DATA_DIR` | `~/.pi-web` | Pi Web data directory (projects.json, daemon state) |
 | `PI_WEB_SESSIOND_SOCKET` | `$PI_WEB_DATA_DIR/sessiond.sock` | Unix socket path for session daemon |
 | `PI_WEB_SESSIOND_PORT` | — | Optional TCP port for daemon (if unset, uses Unix socket) |
@@ -253,7 +328,13 @@ Pi Web stores its state at `~/.pi-web/`:
 - `sessiond.sock` — Unix socket for session daemon communication
 - Active session runtimes and WebSockets — in-memory in the session daemon
 
-This directory is bind-mounted to `.pi-web/` on the host for persistence.
+This directory is bind-mounted to `.pi/web/` on the host for persistence.
+
+Pi Web upgrades to WebSockets for workspace terminals (`…/terminals/<id>/socket`)
+and for its event stream (`/api/machines/local/events`), both of which return
+`101` through the gateway. Keep the `Upgrade`/`Connection` headers and
+`proxy_buffering off` in `config/ui-gateway.conf` or the terminal and live
+session updates break.
 
 ### Core model
 
@@ -268,11 +349,17 @@ Pi Web reuses existing Pi auth and model configuration from `~/.pi/agent/`.
 
 ## CI/CD
 
-The GitHub Actions workflow at `.github/workflows/docker.yml` builds and pushes the image to `ghcr.io/<owner>/<repo>` on every push to `main` and on version tags.  Pull request builds run without pushing.
+The GitHub Actions workflow at `.github/workflows/docker.yml` builds and pushes
+the single agent image (`Dockerfile`) to `ghcr.io/<owner>/<repo>`, on every push
+to `main`. The separate `proxy/Dockerfile` and its matrix leg were removed with
+the Squid apparatus.
 
-The image is tagged with:
+Images are tagged with:
 - branch name (e.g. `main`)
 - git SHA prefix (`sha-abc1234`)
+
+(semver patterns are configured in `metadata-action`, but the workflow is not
+triggered by tag pushes today.)
 
 ---
 

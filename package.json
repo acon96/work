@@ -9,7 +9,6 @@
   "pi": {
     "extensions": [
       "extensions/system-prompt",
-      "extensions/network-mode",
       "extensions/scheduler",
       "extensions/todo",
       "extensions/llama-swap",
@@ -24,10 +23,12 @@
     ]
   },
   "dependencies": {
-    "@amartinr/pi-searxng": "1.0.3",
-    "@earendil-works/pi-coding-agent": "0.84.1",
-    "@jmfederico/pi-web": "1.202608.1",
+    "@amartinr/pi-searxng": "1.0.4",
+    "@earendil-works/pi-coding-agent": "1.0.4",
+    "@erichll/pi-sandbox": "0.24.0",
+    "@gotgenes/pi-permission-system": "39.1.0",
+    "@jmfederico/pi-web": "1.202610.1",
     "pi-lens": "3.8.71",
-    "pi-smart-fetch": "0.3.12"
+    "pi-smart-fetch": "0.3.17"
   }
 }

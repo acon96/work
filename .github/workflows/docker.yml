@@ -1,4 +1,4 @@
-name: Build and publish Docker image
+name: Build and publish Docker images
 
 on:
   push:
@@ -7,11 +7,15 @@ on:
 
 jobs:
   build:
-    name: Build & push
+    name: Build & push agent image
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write   # needed to push to GHCR
+
+    # Single image: outbound policy is enforced inside the agent image by the
+    # pi-sandbox extension (bubblewrap), so there is no separate proxy image
+    # any more.
 
     steps:
       - name: Checkout
@@ -43,6 +47,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

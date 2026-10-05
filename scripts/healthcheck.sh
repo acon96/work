@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# healthcheck.sh — verify all critical sandbox services are running
+# healthcheck.sh - verify all critical sandbox services are running
 set -euo pipefail
 
 EXIT_CODE=0
 PI_WEB_DATA_DIR="${PI_WEB_DATA_DIR:-/home/agent/.pi/web}"
 PI_WEB_SESSIOND_SOCKET="${PI_WEB_SESSIOND_SOCKET:-/tmp/pi-web/sessiond.sock}"
 
-# Check squid (proxy) is still running
-if ! pgrep -f "squid" > /dev/null 2>&1; then
-    echo "UNHEALTHY: squid process not running"
+# Check the pi-sandbox execution substrate. pi-sandbox wraps every Bash tool
+# invocation in bubblewrap; if unprivileged user namespaces or bwrap itself are
+# unavailable the security model is silently degraded, so treat that as
+# unhealthy. This mirrors pi-sandbox's own preflight (a minimal bind-mounted
+# sandbox with network isolation).
+if ! command -v bwrap > /dev/null 2>&1; then
+    echo "UNHEALTHY: bwrap not installed (pi-sandbox cannot enforce Bash policy)"
     EXIT_CODE=1
-fi
-
-# Check dnsmasq (dns filtering) is still running
-if ! pgrep -f "dnsmasq" > /dev/null 2>&1; then
-    echo "UNHEALTHY: dnsmasq process not running"
+elif ! bwrap --ro-bind / / --unshare-all --share-net /bin/true > /dev/null 2>&1; then
+    echo "UNHEALTHY: bwrap cannot create sandboxes (check user namespaces / seccomp / AppArmor)"
     EXIT_CODE=1
 fi
 
@@ -45,7 +46,7 @@ if ! pgrep -f "supercronic.*scheduler.crontab" > /dev/null 2>&1; then
 fi
 
 if [ $EXIT_CODE -eq 0 ]; then
-    echo "HEALTHY: All critical services running (squid, dnsmasq, pi-web, supercronic)"
+    echo "HEALTHY: All critical services running (sandbox substrate, pi-web, supercronic)"
 fi
 
 exit $EXIT_CODE

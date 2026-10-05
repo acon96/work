@@ -1,0 +1,28 @@
+{
+  "permission": {
+    "*": "allow",
+    "external_directory": "ask",
+    "path": {
+      "*": "allow",
+      ".env": "deny",
+      ".env.*": "deny",
+      "*.env": "deny",
+      ".env.example": "allow",
+      "*.pem": "deny",
+      "*.key": "deny",
+      "*.p12": "deny",
+      "*.pfx": "deny",
+      "~/.ssh/*": "deny",
+      "~/.git-credentials": "deny",
+      "~/.pi/agent/extensions/pi-sandbox/config.json": "deny",
+      "~/.pi/agent/extensions/pi-permission-system/config.json": "deny",
+      "~/.pi/agent/settings.json": "deny",
+      "~/.pi/agent/models.json": "deny"
+    },
+    "bash": {
+      "*": "allow",
+      "sudo *": "deny",
+      "rm -rf /*": "deny"
+    }
+  }
+}

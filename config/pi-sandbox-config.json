@@ -1,0 +1,22 @@
+{
+  "subagents": { "provider": "off" },
+  "network": {
+    "strictAllowlist": false,
+    "allowedDomains": [
+      "api.anthropic.com",
+      "api.openai.com",
+      "registry.npmjs.org",
+      "pypi.org",
+      "files.pythonhosted.org",
+      "*.github.com",
+      "objects.githubusercontent.com",
+      "raw.githubusercontent.com",
+      "*.huggingface.co",
+      "*.hf.co",
+      "arxiv.org",
+      "ntfy.sh"
+    ],
+    "deniedDomains": []
+  },
+  "hostIPC": { "mode": "off" }
+}

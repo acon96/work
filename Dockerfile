@@ -1,20 +1,24 @@
-# ── base ─────────────────────────────────────────────────────────────────────
+# -- base ---------------------------------------------------------------------
 FROM node:24-slim
 
 # Install system dependencies.
-# squid-openssl is the SSL-bumping build of squid (needed for Mode B MITM).
-# Note: squid and squid-openssl conflict — use squid-openssl only.
 # build-essential is needed for native node module compilation (node-pty).
-# e2fsprogs provides chattr for making sudoers immutable.
 # supercronic is a cron-compatible job scheduler designed for containers.
+# There is deliberately no proxy, DNS, firewall, sudo, or privilege-dropping
+# tooling here: outbound policy is enforced per-Bash-command by pi-sandbox
+# (bubblewrap + seccomp network namespaces), and tool-level policy by
+# pi-permission-system.
+#
+# bubblewrap/socat/ripgrep are the native prerequisites of pi-sandbox's Linux
+# sandbox runtime. Unprivileged user namespaces must be available at runtime:
+# on Kubernetes nodes this may require an AppArmor profile for bwrap or
+# kernel.apparmor_restrict_unprivileged_userns=0.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        sudo \
-        gosu \
-        squid-openssl \
-        dnsmasq \
+        bubblewrap \
+        socat \
+        ripgrep \
         openssl \
         ca-certificates \
-        iptables \
         procps \
         jq \
         build-essential \
@@ -32,9 +36,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tar \
         zstd \
         lsof \
-        net-tools \
-        strace \
-        e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
 # install UV to a system-wide location so all users (including agent) can use it
@@ -52,53 +53,33 @@ RUN curl -fsSLO "https://github.com/aptible/supercronic/releases/download/v${SUP
  && chmod +x supercronic-linux-amd64 \
  && mv supercronic-linux-amd64 /usr/local/bin/supercronic
 
-# ── users ─────────────────────────────────────────────────────────────────────
+# -- users ---------------------------------------------------------------------
 # The node:24-slim image already has a `node` user (uid 1000).
-# We use uid 1001 for the agent user — the sole runtime user.
-# Root is available for build-time / privileged operations; gosu used at runtime.
+# We use uid 1001 for the agent user - the sole runtime user, and the user the
+# container actually runs as (see USER below). There is no sudo and no
+# privilege-dropping handoff: nothing this image runs needs root.
 RUN useradd -m -u 1001 -s /bin/bash agent
-
-# Passwordless sudo for the agent user — allowlist will be enforced at runtime
-# by regenerating /etc/sudoers from /config/sudo-allowlist.txt in entrypoint.sh.
-RUN echo 'agent ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/agent \
- && chmod 0440 /etc/sudoers.d/agent
-
-# Copy sudo allowlist (will be processed into /etc/sudoers at container startup)
-COPY config/sudo-allowlist.txt /config/sudo-allowlist.txt
 
 # Application directory (owned by root for build steps)
 RUN mkdir -p /app
 
-# ── squid dirs (runtime ssl_db generated in entrypoint) ───────────────────────
-RUN mkdir -p /var/lib/squid /var/log/squid \
- && chown proxy:proxy /var/lib/squid /var/log/squid \
- && chmod 750 /var/lib/squid
-
-# ── proxy env ─────────────────────────────────────────────────────────────────
-# All HTTP traffic from the agent user is routed through squid.
-RUN printf '\nexport http_proxy=http://127.0.0.1:3128\nexport https_proxy=http://127.0.0.1:3128\nexport HTTP_PROXY=http://127.0.0.1:3128\nexport HTTPS_PROXY=http://127.0.0.1:3128\n' \
-        >> /home/agent/.bashrc \
- && printf '\nexport http_proxy=http://127.0.0.1:3128\nexport https_proxy=http://127.0.0.1:3128\nexport HTTP_PROXY=http://127.0.0.1:3128\nexport HTTPS_PROXY=http://127.0.0.1:3128\n' \
-        >> /home/agent/.profile
-
-# ── config & scripts ──────────────────────────────────────────────────────────
-COPY config/squid-allowlist.conf   /etc/work/squid-allowlist.conf
-COPY config/squid-open-get.conf    /etc/work/squid-open-get.conf
-COPY config/dnsmasq-allowlist.conf /etc/work/dnsmasq-allowlist.conf
-COPY config/dnsmasq-open.conf      /etc/work/dnsmasq-open.conf
-COPY config/proxy-allowlist.txt    /config/proxy-allowlist.txt
+# -- config & scripts ---------------------------------------------------------
+# Security policy consumed by pi extensions. Both config files are treated as
+# trusted policy inputs; pi-sandbox additionally write-protects them from
+# sandboxed commands. Bind-mount over the extensions/ tree to change policy
+# without rebuilding the image.
+COPY config/pi-sandbox-config.json         /home/agent/.pi/agent/extensions/pi-sandbox/config.json
+COPY config/pi-permission-system-config.json /home/agent/.pi/agent/extensions/pi-permission-system/config.json
 COPY config/agent.gitconfig        /home/agent/.gitconfig
-COPY scripts/squid-url-rewrite.py  /usr/local/bin/squid-url-rewrite
-COPY scripts/network-mode.sh       /usr/local/bin/network-mode
 COPY scripts/scheduler-run.sh      /usr/local/bin/scheduler-run
 COPY scripts/entrypoint.sh         /entrypoint.sh
 COPY scripts/healthcheck.sh        /usr/local/bin/healthcheck
-RUN chmod +x /entrypoint.sh /usr/local/bin/squid-url-rewrite /usr/local/bin/network-mode /usr/local/bin/scheduler-run /usr/local/bin/healthcheck
+RUN chmod +x /entrypoint.sh /usr/local/bin/scheduler-run /usr/local/bin/healthcheck
 
-# ── workspace ─────────────────────────────────────────────────────────────────
+# -- workspace -----------------------------------------------------------------
 RUN mkdir -p /workspace && chown agent:agent /workspace
 
-# ── pi extensions (pinned npm packages) ──────────────────────────────────────
+# -- pi extensions (pinned npm packages) --------------------------------------
 # Copy package.json and install off-the-shelf extensions.
 # pi will auto-discover these via the "packages" array in .pi/settings.json.
 WORKDIR /app
@@ -107,11 +88,11 @@ RUN npm install --omit=dev 2>&1
 # Expose all npm-installed binaries (pi, pi-web-server, pi-web-sessiond, etc.)
 ENV PATH="/app/node_modules/.bin:${PATH}"
 
-# ── pi directory structure ───────────────────────────────────────────────────
-# ~/.pi/agent/settings.json — global settings (all projects)
-# ~/.pi/agent/extensions/   — local extension files (auto-discovered by pi)
-# ~/.pi/agent/skills/       — global skills (auto-discovered by pi)
-# ~/.pi/sessions/           — session data (persisted via Docker volume)
+# -- pi directory structure ---------------------------------------------------
+# ~/.pi/agent/settings.json - global settings (all projects)
+# ~/.pi/agent/extensions/   - local extension files (auto-discovered by pi)
+# ~/.pi/agent/skills/       - global skills (auto-discovered by pi)
+# ~/.pi/sessions/           - session data (persisted via Docker volume)
 RUN mkdir -p /home/agent/.pi/agent \
  && mkdir -p /home/agent/.pi/agent/extensions \
  && mkdir -p /home/agent/.pi/agent/skills \
@@ -122,7 +103,7 @@ RUN mkdir -p /home/agent/.pi/agent \
 COPY extensions/ /home/agent/.pi/agent/extensions/
 COPY skills/ /home/agent/.pi/agent/skills/
 
-# -- Compile custom pi-web plugins from TypeScript ────────────────────────
+# -- Compile custom pi-web plugins from TypeScript ------------------------
 # Install TypeScript as a build dependency (dev-only, not needed at runtime).
 RUN --mount=type=cache,target=/root/.npm \
     npm install --no-save --omit=dev typescript 2>&1
@@ -151,16 +132,19 @@ COPY .pi/agent/models.json /home/agent/.pi/agent/models.json
 COPY .pi/agent/SYSTEM.md /home/agent/.pi/agent/SYSTEM.md
 RUN chown agent:agent /home/agent/.pi/agent/SYSTEM.md
 
-# Squid log directory (proxy user needs write access).
-RUN mkdir -p /var/log/squid && chown proxy:proxy /var/log/squid
-
 # Set default env vars
 ENV PI_WEB_DATA_DIR="/home/agent/.pi/web"
 ENV SCHEDULER_STATE_DIR="/home/agent/.pi/scheduled"
 ENV SCHEDULER_CRONTAB_PATH="/home/agent/.pi/scheduled/scheduler.crontab"
 ENV PI_WEB_SESSIOND_SOCKET="/tmp/pi-web/sessiond.sock"
 
-# The entrypoint starts dnsmasq + squid + pi-web, then execs the pi-web-server as agent.
+# The agent is the only runtime user. Nothing here needs root: there is no
+# proxy, DNS, or privilege-dropping responsibility anywhere in this image.
+# Outbound policy is enforced per-Bash-command by pi-sandbox (bubblewrap).
+USER agent
+
+# The entrypoint starts sessiond + supercronic, then execs the pi web server
+# as the agent user.
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["pi-web-server"]
 

@@ -71,16 +71,18 @@ function gatherContextFromToolCalls(
       }
     }
 
-    // Build label based on tool type and metadata
+    // Build label based on tool type and metadata.
+    // pi 1.0 types tool-result details as JsonValue; narrow to an object here.
+    const details = (entry.message.details ?? {}) as Record<string, unknown>;
     let label: string;
-    if (toolName === "read" && entry.message.details?.path) {
-      label = `File: ${entry.message.details.path}`;
-    } else if (toolName === "bash" && entry.message.details?.command) {
-      label = `Command: ${entry.message.details.command}`;
-    } else if (toolName === "grep" && entry.message.details?.pattern) {
-      label = `Grep: ${entry.message.details.pattern}`;
-    } else if (toolName === "find" && entry.message.details?.pattern) {
-      label = `Find: ${entry.message.details.pattern}`;
+    if (toolName === "read" && details.path) {
+      label = `File: ${details.path}`;
+    } else if (toolName === "bash" && details.command) {
+      label = `Command: ${details.command}`;
+    } else if (toolName === "grep" && details.pattern) {
+      label = `Grep: ${details.pattern}`;
+    } else if (toolName === "find" && details.pattern) {
+      label = `Find: ${details.pattern}`;
     } else {
       label = `Tool: ${toolName} [${entry.message.toolCallId}]`;
     }
