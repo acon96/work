@@ -9,8 +9,8 @@
 # prompts.
 #
 #   work        the agent. Non-root, no sudo, no CA machinery. Also runs the
-#               pi-sandbox brokers and the Pi process itself.
-#   ui-gateway  nginx reverse proxy; the only host-facing service.
+#               pi-sandbox brokers and the Pi process itself. Publishes the
+#               Pi Web UI on the host loopback.
 #   searxng     metasearch; does its own outbound searching.
 #   llama-swap  optional local model serving (profile: llama-swap).
 #
@@ -18,7 +18,7 @@
 # bypass" (separate proxy pod, internal-only networks) to "extension that must
 # be correctly loaded" (pi-sandbox). The Pi process itself is not OS-sandboxed;
 # its fetches and model calls use `agent-net` directly. Keep `work` on no other
-# networks, and treat pi-sandbox config files as read-only policy inputs.
+# networks, and treat the policy files under config/ as read-only inputs.
 # -----------------------------------------------------------------------------
 
 services:
@@ -33,7 +33,6 @@ services:
     container_name: work
 
     networks:
-      - frontend
       - agent-net
 
     depends_on:
@@ -78,15 +77,23 @@ services:
         source: ./config/pi-permission-system-config.json
         target: /home/agent/.pi/agent/extensions/pi-permission-system/config.json
         read_only: true
+      - type: bind
+        source: ./config/web-search.json
+        target: /home/agent/.pi/agent/web-search.json
+        read_only: true
 
     # -- ports ----------------------------------------------------------------
-    # None, deliberately. `frontend` is an internal network, and Docker cannot
-    # publish a port on one. Host access to the UI goes through `ui-gateway`.
+    # Bound to the host loopback by default: the Pi Web UI is reachable at
+    # http://127.0.0.1:${PI_WEB_PORT:-8504} and on no other interface. Do not
+    # widen PI_WEB_BIND_ADDRESS; pi-web itself is not a permission boundary.
+    ports:
+      - "${PI_WEB_BIND_ADDRESS:-127.0.0.1}:${PI_WEB_PORT:-8504}:8504"
 
     # -- environment ----------------------------------------------------------
     environment:
-      # SearXNG search endpoint (set to "searxng" for docker-compose, or a URL)
-      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      # SearXNG search endpoint read by pi-web-access (web_search). Point at
+      # the local service here, or an external instance.
+      SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080}
       # Llama-swap URL (for dynamic model discovery).
       LLAMA_SWAP_URL: ${LLAMA_SWAP_URL:-}
       # Optional HTTPS git credentials written to /home/agent/.git-credentials at startup.
@@ -98,8 +105,8 @@ services:
       GIT_CREDENTIAL_PASSWORD: ${GIT_CREDENTIAL_PASSWORD:-}
       # Pi Web web server port
       PI_WEB_PORT: ${PI_WEB_PORT:-8504}
-      # Pi Web web server bind host. Must be 0.0.0.0 inside the container so the
-      # ui-gateway on the internal frontend network can reach it.
+      # Pi Web web server bind host. Must be 0.0.0.0 inside the container so
+      # the published port can reach it.
       PI_WEB_HOST: ${PI_WEB_HOST:-0.0.0.0}
 
     # -- security -------------------------------------------------------------
@@ -130,45 +137,17 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # ui-gateway - nginx reverse proxy for the Pi Web UI
-  #
-  # The only host-facing service. `frontend` is internal, so the UI is reachable
-  # from the host through here and nowhere else. It carries no agent state, no
-  # credentials, and joins no egress network.
-  # ---------------------------------------------------------------------------
-  ui-gateway:
-    image: nginx:1.27-alpine
-    container_name: work-ui-gateway
-    networks:
-      - ui-edge
-      - frontend
-    ports:
-      # Bound to the host loopback by default: the UI is reachable at
-      # http://127.0.0.1:${PI_WEB_PORT:-8504} and on no other interface.
-      - "${PI_WEB_BIND_ADDRESS:-127.0.0.1}:${PI_WEB_PORT:-8504}:8080"
-    volumes:
-      - ./config/ui-gateway.conf:/etc/nginx/conf.d/default.conf:ro
-    depends_on:
-      work:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    security_opt:
-      - no-new-privileges:true
-    restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
   # searxng - open-source metasearch engine
   # ---------------------------------------------------------------------------
   searxng:
     image: searxng/searxng:latest
     container_name: searxng
     networks:
-      - agent-net
+      agent-net:
+        # Static address matching config/web-search.json ssrf.allowRanges, so
+        # pi-web-access can reach SearXNG while the SSRF guard stays closed to
+        # everything else private.
+        ipv4_address: 172.28.0.10
     volumes:
       - searxng-data:/etc/searxng
       - ./config/searxng-settings.yml:/etc/searxng/settings.yml:ro
@@ -201,21 +180,18 @@ services:
 
 # -- networks -----------------------------------------------------------------
 networks:
-  # Host-facing. Only the UI gateway is attached, and it is the only service
-  # with published ports.
-  ui-edge:
-    driver: bridge
-  # Gateway <-> agent. Internal, so the agent can never be reached from or
-  # reach the host network stack directly.
-  frontend:
-    internal: true
   # Agent + internal dependencies. Egress-capable: the pi-sandbox broker and
   # the Pi process itself need direct egress; sandboxed Bash commands do NOT
   # (they get a private network namespace whose only exit is the broker's
-  # policy proxy). On Kubernetes, this maps to a single Pod network with egress
-  # NetworkPolicy scoped per-pod, not per-process.
+  # policy proxy). Subnet is pinned so the SearXNG address in
+  # config/web-search.json ssrf.allowRanges is stable. On Kubernetes, this
+  # maps to a single Pod network with egress NetworkPolicy scoped per-pod,
+  # not per-process; update ssrf.allowRanges to match the SearXNG Pod IP.
   agent-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 # -- named volumes ------------------------------------------------------------
 volumes:

@@ -16,6 +16,7 @@
       "~/.git-credentials": "deny",
       "~/.pi/agent/extensions/pi-sandbox/config.json": "deny",
       "~/.pi/agent/extensions/pi-permission-system/config.json": "deny",
+      "~/.pi/agent/web-search.json": "deny",
       "~/.pi/agent/settings.json": "deny",
       "~/.pi/agent/models.json": "deny"
     },

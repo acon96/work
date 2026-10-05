@@ -64,12 +64,15 @@ RUN useradd -m -u 1001 -s /bin/bash agent
 RUN mkdir -p /app
 
 # -- config & scripts ---------------------------------------------------------
-# Security policy consumed by pi extensions. Both config files are treated as
-# trusted policy inputs; pi-sandbox additionally write-protects them from
-# sandboxed commands. Bind-mount over the extensions/ tree to change policy
-# without rebuilding the image.
+# Security policy consumed by pi extensions. These files are treated as
+# trusted policy inputs; pi-sandbox additionally write-protects its own config
+# from sandboxed commands. Bind-mount them over (see docker-compose.yml) to
+# change policy without rebuilding the image.
 COPY config/pi-sandbox-config.json         /home/agent/.pi/agent/extensions/pi-sandbox/config.json
 COPY config/pi-permission-system-config.json /home/agent/.pi/agent/extensions/pi-permission-system/config.json
+# pi-web-access policy: search restricted to the configured SearXNG endpoint,
+# SSRF guard with a narrow allow-range for the internal SearXNG container.
+COPY config/web-search.json                /home/agent/.pi/agent/web-search.json
 COPY config/agent.gitconfig        /home/agent/.gitconfig
 COPY scripts/scheduler-run.sh      /usr/local/bin/scheduler-run
 COPY scripts/entrypoint.sh         /entrypoint.sh
@@ -85,6 +88,12 @@ RUN mkdir -p /workspace && chown agent:agent /workspace
 WORKDIR /app
 COPY package.json /app/package.json
 RUN npm install --omit=dev 2>&1
+# pi-web ships the relays Pi package inside its tarball and its session daemon
+# auto-installs it into the agent profile at startup (relays = remote/mobile
+# relay sessions). This deployment does not use relays: remove the shipped
+# source so the auto-install has nothing to install, and the entrypoint records
+# the matching dismissal so the reconciliation skips it cleanly.
+RUN rm -rf /app/node_modules/@jmfederico/pi-web/dist/pi-packages/relays
 # Expose all npm-installed binaries (pi, pi-web-server, pi-web-sessiond, etc.)
 ENV PATH="/app/node_modules/.bin:${PATH}"
 
@@ -115,7 +124,7 @@ COPY pi-web-plugins/ /app/.pi-web-plugins-src/
 
 # Remove bundled info and workspace-tasks plugins (replaced by local versions),
 # then compile and install custom plugins from TypeScript.
-RUN PI_WEB_REPLACE_PLUGINS="info workspace-tasks relays" \
+RUN PI_WEB_REPLACE_PLUGINS="info workspace-tasks" \
     /usr/local/bin/build-plugins /app/.pi-web-plugins-src /app/node_modules/@jmfederico/pi-web/dist/pi-web-plugins
 
 # Pi Web configuration (pathAccess allows the scheduler history plugin to read

@@ -16,11 +16,9 @@
   ],
   "packages": [
     "/app/node_modules/@jmfederico/pi-web",
-    "/app/node_modules/@amartinr/pi-searxng",
     "/app/node_modules/@erichll/pi-sandbox",
     "/app/node_modules/@gotgenes/pi-permission-system",
     "/app/node_modules/pi-lens",
-    "/app/node_modules/pi-smart-fetch",
-    "../../../../app/node_modules/@jmfederico/pi-web/dist/pi-packages/relays"
+    "/app/node_modules/pi-web-access"
   ]
 }

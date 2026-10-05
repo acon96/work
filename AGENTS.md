@@ -13,7 +13,7 @@ This document is for AI agents (and humans) doing further development on this re
 work/
 ├── Dockerfile                   Agent image (Node 24 LTS); uid 1001, no root/sudo/proxy;
 │                                includes bubblewrap/socat/ripgrep for pi-sandbox
-├── docker-compose.yml           Compose: work + ui-gateway + searxng (+ llama-swap)
+├── docker-compose.yml           Compose: work + searxng (+ llama-swap)
 ├── package.json                 Pinned pi-extensions dependencies (pi 1.x)
 ├── .pi/
 │   ├── agent/
@@ -27,7 +27,7 @@ work/
 │   ├── pi-sandbox-config.json   pi-sandbox policy: domain baseline + human approval, subagents off
 │   ├── pi-permission-system-config.json
 │   │                            pi-permission-system policy: human prompts, no authorizerChain
-│   ├── ui-gateway.conf          nginx server block: the only published port in the stack
+│   ├── web-search.json          pi-web-access policy: SearXNG-only search, SSRF guard ranges
 │   ├── searxng-settings.yml     SearXNG search engine configuration
 │   └── llama-swap.yml           llama-swap service configuration
 ├── scripts/
@@ -48,7 +48,7 @@ work/
 │   └── wiki-js/                 pi skill: operational workflow for Wiki.js page/asset/nav management
 ├── pi-web-plugins/              Pi Web plugin overrides (merged into npm package dist)
 │   └── scheduler-history/       Pi Web plugin: workspace panel for scheduled run history
-└── .github/workflows/docker.yml CI/CD: builds & publishes agent + proxy images
+└── .github/workflows/docker.yml CI/CD: builds & publishes the image on push to main
 ```
 
 ---
@@ -56,7 +56,7 @@ work/
 ## Core invariants — never violate these
 
 1. **There is only one runtime user: `agent` (uid 1001), and the agent container runs as it.** `USER agent` is set in the image and `user: "1001:1001"` in Compose. There is no sudo, no gosu, no root entrypoint, and no `CAP_*` on the agent container.
-2. **Host access to the UI goes only through `ui-gateway` (nginx)**, the only service with published ports; it joins `ui-edge` + `frontend` and holds no agent state, no credentials, and no agent network access. Never add `ports:` to `work`; `frontend` stays `internal: true`.
+2. **The Pi Web UI port is published on the host loopback only.** The `work` service maps `${PI_WEB_BIND_ADDRESS:-127.0.0.1}:${PI_WEB_PORT:-8504}:8504`. Never widen `PI_WEB_BIND_ADDRESS`: pi-web is not a permission boundary; pi-permission-system and pi-sandbox enforce policy.
 3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure or env vars.** `config/pi-sandbox-config.json` is the single policy source of truth, installed at `~/.pi/agent/extensions/pi-sandbox/config.json` (read-only bind mount; pi-sandbox also write-protects it against sandboxed commands). `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
 4. **Tool/file policy is enforced by pi-permission-system.** `config/pi-permission-system-config.json` (installed at `~/.pi/agent/extensions/pi-permission-system/config.json`, read-only) configures human prompts only: no `authorizerChain`, so no model-backed reviewer ever runs. Keep `external_directory: ask` and the secret-file `deny` block.
 5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs `bwrap --ro-bind / / --unshare-all --share-net /bin/true`; if user namespaces, seccomp, or AppArmor on the host/node block that, the stack reports unhealthy rather than running unenforced. On Kubernetes nodes this requires usable unprivileged user namespaces (on AppArmor-enforcing nodes: a bwrap profile, or `kernel.apparmor_restrict_unprivileged_userns=0`) and a permissive-enough seccomp profile.
@@ -155,6 +155,8 @@ Custom pi-web plugins live in `pi-web-plugins/<id>/` and are written in TypeScri
 
 The `scheduler-history` plugin reads execution logs from `/home/agent/.pi/scheduled/`, which is outside the workspace. Access to this directory is granted via `pathAccess.allowedPaths` in the pi-web config at `config/pi-web-config.json` (installed to `/home/agent/.config/pi-web/config.json` at build time).
 
+Relays are deliberately disabled: pi-web's session daemon auto-installs the `@jmfederico/pi-relay` package (shipped inside its tarball at `dist/pi-packages/relays`) into the agent profile at startup. The Dockerfile deletes that shipped source, and `scripts/entrypoint.sh` seeds the matching pi-web dismissal record in `$PI_WEB_DATA_DIR` so reconciliation skips it. Keep both: do not re-add a `relays` entry to `packages` in settings.json.
+
 ---
 
 ## Docker & sandboxing
@@ -163,9 +165,7 @@ The `scheduler-history` plugin reads execution logs from `/home/agent/.pi/schedu
 
 | Network       | Egress? | Attached to                              |
 |---------------|---------|------------------------------------------|
-| `ui-edge`     | yes (host-facing) | `ui-gateway` only; the only service with published ports |
-| `frontend`    | no (`internal: true`) | `work`, `ui-gateway` (Pi Web ingress only) |
-| `agent-net`   | yes     | `work`, `searxng`, `llama-swap`          |
+| `agent-net`   | yes (subnet pinned to 172.28.0.0/24) | `work`, `searxng` (static IP 172.28.0.10), `llama-swap` |
 
 Squid and the separate proxy container are gone. Network policy for Bash is
 enforced per-command inside `work` by pi-sandbox (bubblewrap network
@@ -173,10 +173,9 @@ namespaces + policy broker). The Pi process itself and the pi-sandbox broker
 use `agent-net` directly; sandboxed Bash commands get a private namespace
 whose only exit is the broker's policy proxy.
 
-Docker cannot publish a container port on an `internal: true` network, so the UI
-path is `ui-edge` (published) -> `ui-gateway` (nginx) -> `frontend` ->
-`work:8504`. Keep it that way: adding `ports:` to `work` requires making
-`frontend` non-internal, which hands the agent a host-facing interface.
+The `agent-net` subnet is pinned so the SearXNG address in
+`config/web-search.json` -> `ssrf.allowRanges` stays stable; update both together
+when deploying (e.g. Kubernetes pod IP for SearXNG).
 
 ### Runtime requirements for pi-sandbox
 
@@ -292,7 +291,11 @@ This file is bind-mounted into the container at `/home/agent/.pi/agent/models.js
 
 ### SearXNG
 
-The SearXNG URL is configured via `SEARXNG_URL` env var.  The `pi-searxng` extension reads this from the environment at runtime.
+The SearXNG endpoint is configured via the `SEARXNG_BASE_URL` env var, read at
+runtime by the `pi-web-access` extension (`web_search` tool). Search providers
+are pinned to SearXNG via `config/web-search.json` -> `webSearch.allowedProviders`;
+the SSRF guard's `ssrf.allowRanges` must cover the SearXNG address for it to be
+reachable.
 
 ---
 
@@ -303,18 +306,17 @@ Pi Web is a web control plane for Pi Coding Agent with a split-process architect
 - **Web server** (`pi-web-server`): serves the API and browser UI, defaults to `127.0.0.1:8504`
 
 In this deployment the web server binds `0.0.0.0:8504` **inside the agent
-container**, which is safe only because that container sits on internal
-networks. Browsers reach it through `ui-gateway` (nginx, `config/ui-gateway.conf`),
-which is the only published port in the stack and pins to the host loopback by
-default (`PI_WEB_BIND_ADDRESS`). Do not change the bind host back to
-`127.0.0.1` inside the container: the gateway could no longer connect.
+container**, and the `work` service publishes that port on the host loopback
+only (`PI_WEB_BIND_ADDRESS` defaults to `127.0.0.1`). Do not change the bind
+host back to `127.0.0.1` inside the container: Docker's port publishing
+connects to the container's bridge address, so the UI would become unreachable.
 
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `PI_WEB_PORT` / `PORT` | `8504` | Web server port |
-| `PI_WEB_HOST` | `127.0.0.1` | Web server bind host; this stack sets it to `0.0.0.0` so the gateway can connect (host-side exposure is the gateway's `PI_WEB_BIND_ADDRESS`) |
+| `PI_WEB_HOST` | `127.0.0.1` | Web server bind host; this stack sets it to `0.0.0.0` so the published port can connect (host-side exposure is the `work` service's `PI_WEB_BIND_ADDRESS`) |
 | `PI_WEB_DATA_DIR` | `~/.pi-web` | Pi Web data directory (projects.json, daemon state) |
 | `PI_WEB_SESSIOND_SOCKET` | `$PI_WEB_DATA_DIR/sessiond.sock` | Unix socket path for session daemon |
 | `PI_WEB_SESSIOND_PORT` | — | Optional TCP port for daemon (if unset, uses Unix socket) |
@@ -331,10 +333,8 @@ Pi Web stores its state at `~/.pi-web/`:
 This directory is bind-mounted to `.pi/web/` on the host for persistence.
 
 Pi Web upgrades to WebSockets for workspace terminals (`…/terminals/<id>/socket`)
-and for its event stream (`/api/machines/local/events`), both of which return
-`101` through the gateway. Keep the `Upgrade`/`Connection` headers and
-`proxy_buffering off` in `config/ui-gateway.conf` or the terminal and live
-session updates break.
+and for its event stream (`/api/machines/local/events`). Browsers connect
+directly to the published port; there is no reverse proxy in the stack.
 
 ### Core model
 

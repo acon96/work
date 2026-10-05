@@ -16,16 +16,16 @@ graph TB
         end
         searxng["SearXNG<br/>same network"]
         llama["llama-swap<br/>same network"]
-        gateway["nginx ui-gateway<br/>the only published port<br/>no state, no credentials"]
+        net["agent-net bridge<br/>172.28.0.0/24"]
 
         pi --> ps
         pi --> perm
-        pi -.-> searxng
-        pi -.-> llama
-        gateway -->|"internal network"| pi
+        pi --- net
+        searxng --- net
+        llama --- net
     end
 
-    browser(("browser")) -->|"Pi Web"| gateway
+    browser(("browser")) -->|"Pi Web on host loopback"| pi
 
     ps -->|"allowlisted hosts only"| internet((Internet))
     pi -->|"model/API egress (not OS-sandboxed)"| internet
@@ -39,7 +39,7 @@ graph TB
 | OS sandbox     | pi-sandbox wraps every Bash tool call in bubblewrap (mount + network namespaces, seccomp) | Bash writes outside the workspace; reads outside allowed regions; any network connection to non-allowlisted hosts |
 | Network        | pi-sandbox policy (`config/pi-sandbox-config.json`): static allow + per-connection human prompt | Direct sockets, DNS, and raw connections from sandboxed Bash; every non-baseline destination needs a human click |
 | Tool policy    | pi-permission-system allow/ask/deny with human prompts only (no authorizerChain) | Pi's native read/write/edit reaching outside the CWD; access to `.env`, keys, credentials, and the security configs themselves |
-| Network        | Only `ui-gateway` publishes a port; the agent's own UI network is internal   | Direct host-to-agent connections and any route the agent could gain through its UI port        |
+| Network        | The Pi Web UI port is published on the host loopback only (`PI_WEB_BIND_ADDRESS=127.0.0.1`)   | Remote access to the agent's UI; any route the agent could gain through its UI port        |
 | OS             | uid/gid 1001, no sudo, no root, `cap_drop: ALL`, `no-new-privileges`         | Privilege escalation and OS package installation                                                              |
 | Runtime        | Health probes verify bwrap can create sandboxes, plus Pi Web and supercronic liveness | Silent loss of the sandbox substrate: a node that breaks user namespaces turns the stack unhealthy |
 
@@ -85,7 +85,8 @@ subdomain wildcards (`*.example.com`), and optional `:port` restrictions.
 
 The sandbox broker only evaluates public hostnames, so local service names
 (`searxng`, `llama-swap`) cannot be allowlisted; reach them through Pi's own
-tools (web_search, model providers), which run outside the Bash jail.
+tools (web_search, fetch_content, model providers), which run outside the Bash
+jail and are gated by pi-permission-system instead.
 
 ### 3. Run
 
@@ -94,17 +95,17 @@ llama-swap are external services, only mutable runtime state is persisted, and
 Pi Web is published on host loopback. Configure public-safe example endpoints
 through `.env` and start the container:
 ```bash
-SEARXNG_URL=https://search.example.com \
+SEARXNG_BASE_URL=https://search.example.com \
 LLAMA_SWAP_URL=https://ai.example.com \
 docker compose up
 ```
 
 For a self-contained development stack, enable the optional local llama-swap
-service and point the agent at the Compose service names. Sandbox Bash access
-to them via `allowedDomains` entries (`searxng:8080`, `llama-swap:8080`):
+service and point the agent at the Compose service names (Pi tools reach them;
+sandboxed Bash does not):
 
 ```bash
-SEARXNG_URL=http://searxng:8080 \
+SEARXNG_BASE_URL=http://searxng:8080 \
 LLAMA_SWAP_URL=http://llama-swap:8080 \
 docker compose --profile llama-swap up
 ```
@@ -170,9 +171,9 @@ Pi Web provides a browser-based interface for interacting with the agent:
 3. **Sessions** — Start chat sessions with Pi Coding Agent inside a workspace
 
 Chat history and session data persist in the `.pi/agent/sessions` directory on
-the host, bind-mounted into the container. The browser reaches Pi Web through
-the `ui-gateway` service (nginx); the agent container itself publishes no port,
-because an internal network cannot carry one.
+the host, bind-mounted into the container. The `work` container publishes the
+Pi Web port on the host loopback only; do not widen `PI_WEB_BIND_ADDRESS` --
+pi-web itself is not a permission boundary, tool gating is.
 
 Use `/tools state` to see available tools, `/tools toggle <name>` to enable/disable tools, and other extension commands as needed.
 
@@ -182,7 +183,7 @@ llama-swap is external by default. A local service is optional and disabled by d
 
 **Option 1: Local service**
 ```bash
-SEARXNG_URL=http://searxng:8080 \
+SEARXNG_BASE_URL=http://searxng:8080 \
 LLAMA_SWAP_URL=http://llama-swap:8080 \
 docker compose --profile llama-swap up
 ```
@@ -193,7 +194,7 @@ LLAMA_SWAP_URL=https://ai.example.com docker compose up
 ```
 When `LLAMA_SWAP_URL` names a **remote** host, add it to
 `config/pi-sandbox-config.json` -> `allowedDomains` if Bash commands need to
-reach it. A local service name (no dot) is listed as `llama-swap:8080`.
+reach it. A local service name (no dot) is unreachable from sandboxed Bash.
 Configure your pi models to point to this URL for dynamic model discovery.
 
 ### Health Monitoring
@@ -205,9 +206,6 @@ Docker healthchecks verify that all critical services are running:
 - ✅ Pi Web session daemon socket exists and answers `/health`
 - ✅ Pi Web server listening on port 8504
 - ✅ Supercronic scheduler process running
-
-**UI gateway Container** (checked every 30s):
-- ✅ nginx answering on its internal port (which also proves the path to Pi Web works)
 
 **SearXNG Container** (checked every 30s):
 - ✅ HTTP endpoint responding on port 8080
@@ -241,10 +239,10 @@ process exits, not merely when a healthcheck fails.
 | Variable              | Default               | Description                                                                             |
 |-----------------------|-----------------------|-----------------------------------------------------------------------------------------|
 | `WORKSPACE_DIR`       | `./agent-workspace`   | Host path mounted as `/workspace`                                                       |
-| `PI_WEB_PORT`         | `8504`                | Host port for the pi web UI, published by the `ui-gateway` service                        |
+| `PI_WEB_PORT`         | `8504`                | Host port for the pi web UI, published by the `work` service on the host loopback          |
 | `PI_WEB_BIND_ADDRESS` | `127.0.0.1`           | Host interface the UI port is published on; set to `0.0.0.0` to expose it on the LAN       |
-| `PI_WEB_HOST`         | `0.0.0.0`             | Address pi-web binds **inside** the agent container; keep `0.0.0.0` so `ui-gateway` can reach it |
-| `SEARXNG_URL`         | `https://search.example.com` | External SearXNG endpoint; use `http://searxng:8080` with the local-services profile |
+| `PI_WEB_HOST`         | `0.0.0.0`             | Address pi-web binds **inside** the agent container; keep `0.0.0.0` so the published port can reach it |
+| `SEARXNG_BASE_URL`    | `http://searxng:8080` | SearXNG endpoint for pi-web-access `web_search`; set to an external instance to skip the local one |
 | `LLAMA_SWAP_URL`      | `https://ai.example.com` | llama-swap URL for dynamic model discovery; a local service name is reached directly     |
 | `PI_TITLE_MODEL`      | `llama-swap/little-titles` | Model used to generate session titles                                               |
 | `PI_SANDBOX_CONFIG`   | `/home/agent/.pi/agent/extensions/pi-sandbox/config.json` | Path the system-prompt extension reads to describe the active network policy |
@@ -267,13 +265,15 @@ pi-sandbox policy. Installed read-only at `~/.pi/agent/extensions/pi-sandbox/con
 
 pi-permission-system policy. Installed read-only at `~/.pi/agent/extensions/pi-permission-system/config.json`. No `authorizerChain` is configured, so every `ask` is an interactive human prompt in the session UI; no model-backed reviewer ever runs. `external_directory: "ask"` gates out-of-CWD file access; the `path` deny block protects `.env`, keys, git credentials, and the security configs themselves.
 
-### config/ui-gateway.conf
+### config/web-search.json
 
-The nginx server block for the Pi Web UI gateway. It is mounted into
-`ui-gateway` at `/etc/nginx/conf.d/default.conf` and is the only place a host
-address is published. Edit it to change timeouts, body limits, or the
-`X-Forwarded-*` headers; restart the gateway afterwards with
-`docker compose restart ui-gateway`.
+pi-web-access policy. Installed read-only at `~/.pi/agent/web-search.json`.
+`webSearch.allowedProviders: ["searxng"]` pins search to the configured SearXNG
+endpoint (`SEARXNG_BASE_URL`) with no fallback to hosted search providers.
+`ssrf.allowRanges` exempts only the internal SearXNG container address
+(`172.28.0.10/32`, pinned in docker-compose.yml) from the SSRF guard, which
+otherwise blocks loopback and private targets for `fetch_content`. On
+Kubernetes, set this to the SearXNG pod IP (or a dedicated range) so search can still reach it.
 
 ### config/searxng-settings.yml
 
@@ -312,9 +312,8 @@ Default git configuration for the `agent` user.  Copied into the container at `/
 | `@jmfederico/pi-web`             | `1.202610.1`   | Web UI and session daemon (pi 1.x peers)        |
 | `@erichll/pi-sandbox`            | `0.24.0`       | bubblewrap sandboxing of Bash: network + filesystem policy (pi 1.x) |
 | `@gotgenes/pi-permission-system` | `39.1.0`       | allow/ask/deny gates on tools and paths, human prompts only (pi 1.x) |
-| `@amartinr/pi-searxng`           | `1.0.4`        | SearXNG search integration                      |
+| `pi-web-access`                  | `0.36.0`       | `web_search`, `fetch_content`, `get_search_content`, `source_check`; SearXNG-first, built-in SSRF guard (pi 1.x) |
 | `pi-lens`                        | `3.8.71`       | Code lens / language server integration. **Not pi 1.x-ready**: latest release (4.3.0) still peers on pi-tui 0.84/0.85; loads an old bundled pi-tui. Drop or watch upstream |
-| `pi-smart-fetch`                 | `0.3.17`       | Fetch tool. Pre-1.0 (bundles pi-tui 0.82); same caveat as pi-lens |
 
 ### Commands
 

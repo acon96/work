@@ -9,8 +9,9 @@
  * Policy is enforced by two pi extensions, neither of which the agent can
  * change from inside a session:
  *   - pi-sandbox: wraps every Bash command in a bubblewrap sandbox with a
- *     strict domain allowlist (config at ~/.pi/agent/extensions/pi-sandbox/
- *     config.json, write-protected from sandboxed commands).
+ *     baseline domain allowlist; anything else prompts the human once per
+ *     connection (config at ~/.pi/agent/extensions/pi-sandbox/config.json,
+ *     write-protected from sandboxed commands).
  *   - pi-permission-system: gates Pi's native file tools and out-of-CWD
  *     access with human prompts (config at ~/.pi/agent/extensions/
  *     pi-permission-system/config.json).
@@ -56,7 +57,7 @@ Writes from Bash are additionally confined to the current workspace. Reads outsi
 
 If a command needs a domain that is not in the baseline, just run it — the user will be prompted to approve that one connection. Do not attempt to work around the sandbox (proxies, DNS tricks, or helper binaries): that only changes what gets denied, not who decides.
 
-Pi's own tools (web_search / get_search_results, fetch_content) run outside the Bash sandbox: searches go to a local SearXNG instance, and fetches are not covered by the baseline above. Treat the baseline as governing what a Bash command can reach.
+Pi's own web tools (web_search, fetch_content, get_search_content, source_check) run inside the Pi process, outside the Bash sandbox, so the baseline above does not govern them. Search is restricted to the configured SearXNG endpoint; fetches go direct and are guarded against private/loopback targets by pi-web-access's SSRF protection. All web tools are gated by the permission system like any other tool call.
 
 Pi's native file tools are gated by a permission system: reaching outside the current working directory prompts a human, and secret files (.env, keys, credentials) are denied outright.`.trim();
 }

@@ -62,6 +62,22 @@ touch "$SCHEDULER_STATE_DIR/scheduler.crontab"
 # therefore support explicit startup injection into git's standard store.
 configure_git_credentials
 
+# -- pi-web: keep the bundled relays package disabled ----------------------------
+# pi-web sessiond auto-installs "known" Pi packages (currently
+# @jmfederico/pi-relay) from its own tarball into the agent profile at startup,
+# unless the package has been dismissed. This deployment deliberately does not
+# use relays, so record the dismissal (idempotent). The image also removes the
+# shipped package source (see Dockerfile) as defense-in-depth.
+AGENT_PROFILE_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+DISMISSALS_FILE="${PI_WEB_PI_PACKAGE_DISMISSALS_FILE:-$PI_WEB_DATA_DIR/pi-package-dismissals.json}"
+mkdir -p "$(dirname "$DISMISSALS_FILE")"
+if [ ! -f "$DISMISSALS_FILE" ]; then
+    jq -n --arg profileDir "$AGENT_PROFILE_DIR" --arg dismissedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{dismissals: [{profileDir: $profileDir, packageId: "@jmfederico/pi-relay", dismissedAt: $dismissedAt}]}' \
+        > "$DISMISSALS_FILE"
+    log "Dismissed auto-installable Pi package @jmfederico/pi-relay for profile $AGENT_PROFILE_DIR"
+fi
+
 # -- pi-web: ensure socket is free ---------------------------------------------------
 # The pi-web session daemon will create a Unix socket at $PI_WEB_SESSIOND_SOCKET.
 SESSIOND_SOCKET_DIR="$(dirname "$PI_WEB_SESSIOND_SOCKET")"
