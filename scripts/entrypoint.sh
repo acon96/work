@@ -62,6 +62,63 @@ touch "$SCHEDULER_STATE_DIR/scheduler.crontab"
 # therefore support explicit startup injection into git's standard store.
 configure_git_credentials
 
+# -- render network policy -------------------------------------------------------
+# Pristine policy copies are baked into the image under /etc/work/policies
+# (root-owned, read-only to the agent). The effective configs are always
+# re-rendered from them at startup, so restarts are idempotent and env var
+# edits fully replace prior values instead of accumulating. The only runtime
+# policy knobs are PROXY_ALLOWLIST and SSRF_ALLOW_RANGES below; anything else
+# means editing config/ in the repo and rebuilding the image.
+POLICY_SRC="/etc/work/policies"
+SANDBOX_CONFIG="$AGENT_HOME/.pi/agent/extensions/pi-sandbox/config.json"
+PERMISSION_CONFIG="$AGENT_HOME/.pi/agent/extensions/pi-permission-system/config.json"
+WEB_SEARCH_CONFIG="$AGENT_HOME/.pi/agent/web-search.json"
+
+for pair in \
+    "pi-sandbox-config.json:$SANDBOX_CONFIG" \
+    "pi-permission-system-config.json:$PERMISSION_CONFIG" \
+    "web-search.json:$WEB_SEARCH_CONFIG"; do
+    src="$POLICY_SRC/${pair%%:*}"
+    dest="${pair#*:}"
+    if [ -f "$src" ]; then
+        cp "$src" "$dest.tmp" && mv "$dest.tmp" "$dest"
+    fi
+done
+
+# PROXY_ALLOWLIST: comma-separated domains appended to the pi-sandbox
+# silent baseline (legacy name kept for continuity with the squid era).
+if [ -n "${PROXY_ALLOWLIST:-}" ]; then
+    log "Merging PROXY_ALLOWLIST domains into the pi-sandbox baseline"
+    tmp="$(mktemp)"
+    jq --arg list "$PROXY_ALLOWLIST" '
+        .network = (.network // {}) |
+        .network.allowedDomains = ((.network.allowedDomains // [])
+            + ($list | split(",")
+                  | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+                  | map(select(. != "")))
+            | unique)
+    ' "$SANDBOX_CONFIG" > "$tmp"
+    mv "$tmp" "$SANDBOX_CONFIG"
+fi
+
+# SSRF_ALLOW_RANGES: comma-separated CIDRs appended to pi-web-access's
+# ssrf.allowRanges. Only needed when the SearXNG endpoint (or another
+# intended fetch target) resolves to a private address; public endpoints
+# need no exception.
+if [ -n "${SSRF_ALLOW_RANGES:-}" ]; then
+    log "Merging SSRF_ALLOW_RANGES into the pi-web-access SSRF guard"
+    tmp="$(mktemp)"
+    jq --arg list "$SSRF_ALLOW_RANGES" '
+        .ssrf = (.ssrf // {}) |
+        .ssrf.allowRanges = ((.ssrf.allowRanges // [])
+            + ($list | split(",")
+                  | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+                  | map(select(. != "")))
+            | unique)
+    ' "$WEB_SEARCH_CONFIG" > "$tmp"
+    mv "$tmp" "$WEB_SEARCH_CONFIG"
+fi
+
 # -- pi-web: keep the bundled relays package disabled ----------------------------
 # pi-web sessiond auto-installs "known" Pi packages (currently
 # @jmfederico/pi-relay) from its own tarball into the agent profile at startup,

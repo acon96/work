@@ -57,7 +57,7 @@ work/
 
 1. **There is only one runtime user: `agent` (uid 1001), and the agent container runs as it.** `USER agent` is set in the image and `user: "1001:1001"` in Compose. There is no sudo, no gosu, no root entrypoint, and no `CAP_*` on the agent container.
 2. **The Pi Web UI port is published on the host loopback only.** The `work` service maps `${PI_WEB_BIND_ADDRESS:-127.0.0.1}:${PI_WEB_PORT:-8504}:8504`. Never widen `PI_WEB_BIND_ADDRESS`: pi-web is not a permission boundary; pi-permission-system and pi-sandbox enforce policy.
-3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure or env vars.** `config/pi-sandbox-config.json` is the single policy source of truth, installed at `~/.pi/agent/extensions/pi-sandbox/config.json` (read-only bind mount; pi-sandbox also write-protects it against sandboxed commands). `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
+3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure.** The policy JSON files under `config/` ship baked into the image (runtime paths under `~/.pi/agent/`, pristine root-owned copies under `/etc/work/policies/`); there are deliberately NO policy file mounts in Compose or the Kubernetes Deployment. The entrypoint re-renders the runtime configs from the pristine copies at startup, and the only runtime policy knobs are env vars merged in at that point: `PROXY_ALLOWLIST` (comma-separated domains appended to `network.allowedDomains`) and `SSRF_ALLOW_RANGES` (comma-separated CIDRs appended to pi-web-access `ssrf.allowRanges`). Anything beyond those two knobs means editing `config/` and rebuilding the image. `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way. `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
 4. **Tool/file policy is enforced by pi-permission-system.** `config/pi-permission-system-config.json` (installed at `~/.pi/agent/extensions/pi-permission-system/config.json`, read-only) configures human prompts only: no `authorizerChain`, so no model-backed reviewer ever runs. Keep `external_directory: ask` and the secret-file `deny` block.
 5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs `bwrap --ro-bind / / --unshare-all --share-net /bin/true`; if user namespaces, seccomp, or AppArmor on the host/node block that, the stack reports unhealthy rather than running unenforced. On Kubernetes nodes this requires usable unprivileged user namespaces (on AppArmor-enforcing nodes: a bwrap profile, or `kernel.apparmor_restrict_unprivileged_userns=0`) and a permissive-enough seccomp profile.
 6. **Session data persists via bind mounts** at `/home/agent/.pi/agent/sessions` (from `.pi/agent/sessions`), `/home/agent/.pi/agent/settings.json` (from `.pi/agent/settings.json`), and `/home/agent/.pi/web` (from `.pi/web`). Never hardcode paths to non-persistent locations.
@@ -197,13 +197,13 @@ Two ways:
    exact operation once" / "Deny"). The approval covers that one
    hostname:port connection; a new connection prompts again. No file edit and
    no reload needed. Sessions without UI (scheduler tasks) are denied.
-2. **Permanent baseline:** edit `config/pi-sandbox-config.json` ->
-   `network.allowedDomains`. Entries are exact domains, strict-subdomain
-   wildcards (`*.example.com` -- note this does NOT match the apex domain),
-   and optional `:port` restrictions. The file is a read-only bind mount:
-   edit it on the host, then start a new session (pi loads config at
-   extension registration; there is no hot reload). No container restart is
-   required.
+2. **Permanent baseline:** set `PROXY_ALLOWLIST` (comma-separated domains)
+   in the deployment environment. The entrypoint merges those domains into
+   the baked `network.allowedDomains` at startup (see Core invariant 3);
+   apply by restarting the container/pod. Entries are exact domains,
+   strict-subdomain wildcards (`*.example.com` -- note this does NOT match
+   the apex domain), and optional `:port` restrictions. For durable base
+   changes, edit `config/pi-sandbox-config.json` and rebuild the image.
 
 The broker only evaluates **public** hostnames (names with a dot, resolving
 outside private/loopback ranges). Sandbox-ed Bash therefore can never reach
@@ -214,10 +214,12 @@ to make explicitly, not an allowlist edit.
 
 ### Changing policy (operator only)
 
-Policy lives in the two read-only bind mounts under
-`/home/agent/.pi/agent/extensions/`. There is deliberately no agent-side
-control path (no tool, no slash command, no script in the agent image); do not
-add one back. Keep `subagents.provider: "off"` and `hostIPC.mode: "off"`.
+Policy is baked into the image under `/home/agent/.pi/agent/` and
+`/home/agent/.pi/agent/extensions/` -- no policy file mounts. The only
+operator runtime knobs are the `PROXY_ALLOWLIST` and `SSRF_ALLOW_RANGES` env
+vars (see Core invariant 3). There is deliberately no agent-side control path
+(no tool, no slash command, no script in the agent image); do not add one
+back. Keep `subagents.provider: "off"` and `hostIPC.mode: "off"`.
 
 The network review chain is: static deny -> static allow -> human prompt.
 The model-backed reviewer (`pi-auto-review`) is intentionally never enabled:

@@ -73,6 +73,10 @@ COPY config/pi-permission-system-config.json /home/agent/.pi/agent/extensions/pi
 # pi-web-access policy: search restricted to the configured SearXNG endpoint,
 # SSRF guard with a narrow allow-range for the internal SearXNG container.
 COPY config/web-search.json                /home/agent/.pi/agent/web-search.json
+# Pristine root-owned copies: the entrypoint always re-renders the runtime
+# configs from these at startup (idempotent env-var merges, and sandboxed
+# commands cannot rewrite the source of truth).
+COPY config/pi-sandbox-config.json         config/pi-permission-system-config.json config/web-search.json /etc/work/policies/
 COPY config/agent.gitconfig        /home/agent/.gitconfig
 COPY scripts/scheduler-run.sh      /usr/local/bin/scheduler-run
 COPY scripts/entrypoint.sh         /entrypoint.sh

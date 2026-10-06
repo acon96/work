@@ -66,21 +66,6 @@ services:
       - type: bind
         source: .pi/web
         target: /home/agent/.pi/web
-      # Security policy files (baked into the image; bind-mounted here so the
-      # operator can change policy without a rebuild). Sandboxed commands cannot
-      # write these; reload the extension (or restart) to apply changes.
-      - type: bind
-        source: ./config/pi-sandbox-config.json
-        target: /home/agent/.pi/agent/extensions/pi-sandbox/config.json
-        read_only: true
-      - type: bind
-        source: ./config/pi-permission-system-config.json
-        target: /home/agent/.pi/agent/extensions/pi-permission-system/config.json
-        read_only: true
-      - type: bind
-        source: ./config/web-search.json
-        target: /home/agent/.pi/agent/web-search.json
-        read_only: true
 
     # -- ports ----------------------------------------------------------------
     # Bound to the host loopback by default: the Pi Web UI is reachable at
@@ -96,6 +81,13 @@ services:
       SEARXNG_BASE_URL: ${SEARXNG_BASE_URL:-http://searxng:8080}
       # Llama-swap URL (for dynamic model discovery).
       LLAMA_SWAP_URL: ${LLAMA_SWAP_URL:-}
+      # Domains merged into the pi-sandbox baseline at startup.
+      PROXY_ALLOWLIST: ${PROXY_ALLOWLIST:-}
+      # CIDRs appended to the pi-web-access SSRF allow-ranges at startup.
+      # The compose SearXNG sits on the pinned agent-net subnet, so its static
+      # IP must be allowed through the SSRF guard.  In Kubernetes the public
+      # SearXNG host needs no range.
+      SSRF_ALLOW_RANGES: ${SSRF_ALLOW_RANGES:-172.28.0.10/32}
       # Optional HTTPS git credentials written to /home/agent/.git-credentials at startup.
       GIT_CREDENTIAL_URLS: ${GIT_CREDENTIAL_URLS:-}
       GIT_CREDENTIAL_PROTOCOL: ${GIT_CREDENTIAL_PROTOCOL:-https}

@@ -243,6 +243,8 @@ process exits, not merely when a healthcheck fails.
 | `PI_WEB_BIND_ADDRESS` | `127.0.0.1`           | Host interface the UI port is published on; set to `0.0.0.0` to expose it on the LAN       |
 | `PI_WEB_HOST`         | `0.0.0.0`             | Address pi-web binds **inside** the agent container; keep `0.0.0.0` so the published port can reach it |
 | `SEARXNG_BASE_URL`    | `http://searxng:8080` | SearXNG endpoint for pi-web-access `web_search`; set to an external instance to skip the local one |
+| `PROXY_ALLOWLIST`     | --                      | Comma-separated domains merged into the pi-sandbox baseline at startup (legacy name kept for continuity) |
+| `SSRF_ALLOW_RANGES`   | --                      | Comma-separated CIDRs appended to the pi-web-access SSRF allow-ranges at startup (only needed for private-IP fetch targets) |
 | `LLAMA_SWAP_URL`      | `https://ai.example.com` | llama-swap URL for dynamic model discovery; a local service name is reached directly     |
 | `PI_TITLE_MODEL`      | `llama-swap/little-titles` | Model used to generate session titles                                               |
 | `PI_SANDBOX_CONFIG`   | `/home/agent/.pi/agent/extensions/pi-sandbox/config.json` | Path the system-prompt extension reads to describe the active network policy |
@@ -259,21 +261,23 @@ process exits, not merely when a healthcheck fails.
 
 ### config/pi-sandbox-config.json
 
-pi-sandbox policy. Installed read-only at `~/.pi/agent/extensions/pi-sandbox/config.json`. The parser rejects unknown keys (fail closed), so the file contains no comments -- rationale lives here in the README. `network.allowedDomains` is the silent baseline (exact domains, `*.example.com` subdomain wildcards, optional `:port`); everything else prompts the human in the session UI once per connection. `subagents.provider: "off"` keeps subagent execution disabled; `hostIPC.mode: "off"` keeps host execution out of the picture. The model-backed reviewer (`pi-auto-review`) is NOT enabled -- with no reviewer broker registered, pi-sandbox falls through to its built-in interactive approval. Sandboxed commands cannot write this file (pi-sandbox write-protects it); edit on the host, new sessions pick up changes. No container restart needed.
+pi-sandbox policy. Baked into the image at `~/.pi/agent/extensions/pi-sandbox/config.json`; there are no policy file mounts. The only runtime knob is the `PROXY_ALLOWLIST` env var (comma-separated domains) which the entrypoint appends to `network.allowedDomains` at startup (restart to apply). Base changes go in this file and ship with the image. The parser rejects unknown keys (fail closed), so the file contains no comments -- rationale lives here in the README. `network.allowedDomains` is the silent baseline (exact domains, `*.example.com` subdomain wildcards, optional `:port`); everything else prompts the human in the session UI once per connection. `subagents.provider: "off"` keeps subagent execution disabled; `hostIPC.mode: "off"` keeps host execution out of the picture. The model-backed reviewer (`pi-auto-review`) is NOT enabled -- with no reviewer broker registered, pi-sandbox falls through to its built-in interactive approval. Sandboxed commands cannot write the effective config (pi-sandbox write-protects it).
 
 ### config/pi-permission-system-config.json
 
-pi-permission-system policy. Installed read-only at `~/.pi/agent/extensions/pi-permission-system/config.json`. No `authorizerChain` is configured, so every `ask` is an interactive human prompt in the session UI; no model-backed reviewer ever runs. `external_directory: "ask"` gates out-of-CWD file access; the `path` deny block protects `.env`, keys, git credentials, and the security configs themselves.
+pi-permission-system policy. Baked into the image at `~/.pi/agent/extensions/pi-permission-system/config.json`; not configurable at runtime. No `authorizerChain` is configured, so every `ask` is an interactive human prompt in the session UI; no model-backed reviewer ever runs. `external_directory: "ask"` gates out-of-CWD file access; the `path` deny block protects `.env`, keys, git credentials, and the security configs themselves.
 
 ### config/web-search.json
 
-pi-web-access policy. Installed read-only at `~/.pi/agent/web-search.json`.
+pi-web-access policy. Baked into the image at `~/.pi/agent/web-search.json`.
 `webSearch.allowedProviders: ["searxng"]` pins search to the configured SearXNG
 endpoint (`SEARXNG_BASE_URL`) with no fallback to hosted search providers.
 `ssrf.allowRanges` exempts only the internal SearXNG container address
 (`172.28.0.10/32`, pinned in docker-compose.yml) from the SSRF guard, which
 otherwise blocks loopback and private targets for `fetch_content`. On
-Kubernetes, set this to the SearXNG pod IP (or a dedicated range) so search can still reach it.
+Kubernetes with a public SearXNG endpoint no range is needed; if the endpoint
+resolves to a private address, pass it via the `SSRF_ALLOW_RANGES` env var
+(comma-separated CIDRs, appended at startup).
 
 ### config/searxng-settings.yml
 

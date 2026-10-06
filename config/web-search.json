@@ -3,6 +3,6 @@
     "allowedProviders": ["searxng"]
   },
   "ssrf": {
-    "allowRanges": ["172.28.0.10/32"]
+    "allowRanges": []
   }
 }
