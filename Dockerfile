@@ -13,8 +13,17 @@ FROM node:24-slim
 # sandbox runtime. Unprivileged user namespaces must be available at runtime:
 # on Kubernetes nodes this may require an AppArmor profile for bwrap or
 # kernel.apparmor_restrict_unprivileged_userns=0.
+#
+# pi-sandbox remounts a fresh procfs inside every sandbox (--proc /proc).
+# Inside an unprivileged container that mount is refused (EPERM) unless the
+# creating process holds CAP_SYS_ADMIN, so the capability is granted as a
+# file capability on the bwrap binary itself. The container must therefore
+# run with CAP_SYS_ADMIN in its bounding set (Compose cap_add / Kubernetes
+# securityContext.capabilities.add) and WITHOUT no-new-privileges, because
+# file capabilities are not gained across execve when NNP is set.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bubblewrap \
+        libcap2-bin \
         socat \
         ripgrep \
         openssl \
@@ -36,7 +45,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tar \
         zstd \
         lsof \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && setcap cap_sys_admin+ep /usr/bin/bwrap
 
 # install UV to a system-wide location so all users (including agent) can use it
 ENV UV_PYTHON_BIN_DIR=/usr/local/bin/

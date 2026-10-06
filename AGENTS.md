@@ -59,7 +59,7 @@ work/
 2. **The Pi Web UI port is published on the host loopback only.** The `work` service maps `${PI_WEB_BIND_ADDRESS:-127.0.0.1}:${PI_WEB_PORT:-8504}:8504`. Never widen `PI_WEB_BIND_ADDRESS`: pi-web is not a permission boundary; pi-permission-system and pi-sandbox enforce policy.
 3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure.** The policy JSON files under `config/` ship baked into the image (runtime paths under `~/.pi/agent/`, pristine root-owned copies under `/etc/work/policies/`); there are deliberately NO policy file mounts in Compose or the Kubernetes Deployment. The entrypoint re-renders the runtime configs from the pristine copies at startup, and the only runtime policy knobs are env vars merged in at that point: `PROXY_ALLOWLIST` (comma-separated domains appended to `network.allowedDomains`) and `SSRF_ALLOW_RANGES` (comma-separated CIDRs appended to pi-web-access `ssrf.allowRanges`). Anything beyond those two knobs means editing `config/` and rebuilding the image. `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way. `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
 4. **Tool/file policy is enforced by pi-permission-system.** `config/pi-permission-system-config.json` (installed at `~/.pi/agent/extensions/pi-permission-system/config.json`, read-only) configures human prompts only: no `authorizerChain`, so no model-backed reviewer ever runs. Keep `external_directory: ask` and the secret-file `deny` block.
-5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs `bwrap --ro-bind / / --unshare-all --share-net /bin/true`; if user namespaces, seccomp, or AppArmor on the host/node block that, the stack reports unhealthy rather than running unenforced. On Kubernetes nodes this requires usable unprivileged user namespaces (on AppArmor-enforcing nodes: a bwrap profile, or `kernel.apparmor_restrict_unprivileged_userns=0`) and a permissive-enough seccomp profile.
+5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs `bwrap --ro-bind / / --unshare-all --share-net --proc /proc /bin/true`; if user namespaces, seccomp, AppArmor, or the procfs remount on the host/node block that, the stack reports unhealthy rather than running unenforced. Requirements: usable unprivileged user namespaces (on AppArmor-enforcing nodes: a bwrap profile, or `kernel.apparmor_restrict_unprivileged_userns=0`), a permissive-enough seccomp profile, CAP_SYS_ADMIN in the container's bounding set (`cap_add`/`capabilities.add`), and no-new-privileges disabled (file capabilities are not gained with NNP set). The image ships bwrap with `cap_sys_admin+ep` so the capability is only reachable through the bwrap binary itself.
 6. **Session data persists via bind mounts** at `/home/agent/.pi/agent/sessions` (from `.pi/agent/sessions`), `/home/agent/.pi/agent/settings.json` (from `.pi/agent/settings.json`), and `/home/agent/.pi/web` (from `.pi/web`). Never hardcode paths to non-persistent locations.
 
 ---
@@ -179,14 +179,20 @@ when deploying (e.g. Kubernetes pod IP for SearXNG).
 
 ### Runtime requirements for pi-sandbox
 
-- `bubblewrap`, `socat`, `ripgrep` installed in the image (see Dockerfile).
+- `bubblewrap`, `socat`, `ripgrep`, `libcap2-bin` installed in the image (see
+  Dockerfile); bwrap carries a `cap_sys_admin+ep` file capability so it can
+  remount procfs (`--proc /proc`) inside each sandbox.
 - Unprivileged user namespaces usable inside the container: keep
   `seccomp:unconfined` (or an equivalent profile allowing `unshare`/`clone3`),
   and on AppArmor-enforcing Kubernetes nodes install a bwrap profile or set
   `kernel.apparmor_restrict_unprivileged_userns=0`.
+- The container must run with `CAP_SYS_ADMIN` added to its bounding set
+  (Compose `cap_add`, Kubernetes `securityContext.capabilities.add`) and
+  must NOT set no-new-privileges: file capabilities are not gained across
+  execve when NNP is set, which would break the setcap'd bwrap.
 - The container healthcheck fails if `bwrap --ro-bind / / --unshare-all
-  --share-net /bin/true` cannot run, so a node that breaks sandboxing shows up
-  as unhealthy rather than silently unenforced.
+  --share-net --proc /proc /bin/true` cannot run, so a node that breaks
+  sandboxing shows up as unhealthy rather than silently unenforced.
 
 ### Adding an allowlisted domain
 

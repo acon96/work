@@ -10,12 +10,14 @@ PI_WEB_SESSIOND_SOCKET="${PI_WEB_SESSIOND_SOCKET:-/tmp/pi-web/sessiond.sock}"
 # invocation in bubblewrap; if unprivileged user namespaces or bwrap itself are
 # unavailable the security model is silently degraded, so treat that as
 # unhealthy. This mirrors pi-sandbox's own preflight (a minimal bind-mounted
-# sandbox with network isolation).
+# sandbox with a procfs remount and network isolation).  The --proc mount is
+# the part an unprivileged container refuses without CAP_SYS_ADMIN, so it
+# must be in the probe.
 if ! command -v bwrap > /dev/null 2>&1; then
     echo "UNHEALTHY: bwrap not installed (pi-sandbox cannot enforce Bash policy)"
     EXIT_CODE=1
-elif ! bwrap --ro-bind / / --unshare-all --share-net /bin/true > /dev/null 2>&1; then
-    echo "UNHEALTHY: bwrap cannot create sandboxes (check user namespaces / seccomp / AppArmor)"
+elif ! bwrap --ro-bind / / --unshare-all --share-net --proc /proc /bin/true > /dev/null 2>&1; then
+    echo "UNHEALTHY: bwrap cannot create sandboxes (check user namespaces / CAP_SYS_ADMIN on bwrap / seccomp / AppArmor)"
     EXIT_CODE=1
 fi
 

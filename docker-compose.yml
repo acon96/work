@@ -103,13 +103,19 @@ services:
 
     # -- security -------------------------------------------------------------
     # The image default user is already uid 1001; stated here so the boundary is
-    # visible in the deployment definition. No cap_add: nothing privileged runs
-    # in this container.
+    # visible in the deployment definition. The only capability granted is
+    # CAP_SYS_ADMIN, and it is usable only by the file-capped bwrap binary
+    # (setcap in the image), which pi-sandbox needs in order to remount procfs
+    # inside each sandbox.
     user: "1001:1001"
     cap_drop:
       - ALL
+    cap_add:
+      - SYS_ADMIN
     security_opt:
-      - no-new-privileges:true
+      # NOTE: no-new-privileges must NOT be set here.  File capabilities are
+      # not gained across execve when NNP is set, which would break the
+      # setcap'd bwrap.
       # seccomp:unconfined is currently required for two things: node-pty /
       # Pi Web terminal behaviour, and bwrap's namespace creation (clone3,
       # unshare) under pi-sandbox. On Kubernetes, an equivalent permissive

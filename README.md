@@ -48,10 +48,11 @@ Trust model (changed by the Squid removal): network enforcement moved from
 internal-only networks) to "extension that must be correctly loaded"
 (pi-sandbox). The Pi process itself is not OS-sandboxed -- its model calls and
 fetch tools use the container's normal egress. Sandbox integrity is verified
-by the container healthcheck, and the policy files are read-only bind mounts
-that both extensions also write-protect. The equivalent Kubernetes controls
-are a permissive-enough seccomp/AppArmor posture for user namespaces on the
-node, plus the same read-only config mounts.
+by the container healthcheck, and the policy files are baked into the image
+(root-owned pristine copies re-rendered at startup) and write-protected by
+both extensions. The equivalent Kubernetes controls are a permissive-enough
+seccomp/AppArmor posture for user namespaces on the node, plus `CAP_SYS_ADMIN`
+in the container's capabilities (granted as a file capability to bwrap only).
 
 ---
 
@@ -508,9 +509,12 @@ Squid's removal moved enforcement from infrastructure to a pi extension:
 - The Pi process itself (model calls, fetch tools, extensions) is not
   OS-sandboxed and has normal container egress.
 - On Kubernetes, bwrap needs unprivileged user namespaces on the node
-  (AppArmor: bwrap profile or `kernel.apparmor_restrict_unprivileged_userns=0`)
-  and a seccomp profile that allows namespace creation. The container
-  healthcheck fails if sandboxing is broken.
+  (AppArmor: bwrap profile or `kernel.apparmor_restrict_unprivileged_userns=0`),
+  a seccomp profile that allows namespace creation, and `CAP_SYS_ADMIN` added
+  to the container (the image grants it as a file capability on bwrap only,
+  so sandboxed commands cannot acquire it directly). Do not set
+  no-new-privileges: it would prevent the setcap'd bwrap from gaining the
+  capability. The container healthcheck fails if sandboxing is broken.
 
 ---
 
