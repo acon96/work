@@ -3,14 +3,14 @@
   "network": {
     "strictAllowlist": false,
     "allowedDomains": [
-      "api.anthropic.com",
-      "api.openai.com",
       "registry.npmjs.org",
       "pypi.org",
       "files.pythonhosted.org",
+      "github.com",
       "*.github.com",
       "objects.githubusercontent.com",
       "raw.githubusercontent.com",
+      "huggingface.co",
       "*.huggingface.co",
       "*.hf.co",
       "arxiv.org",
