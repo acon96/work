@@ -1,0 +1,39 @@
+pi-sandbox: enable Sandbox Runtime weaker nested sandbox mode
+
+@erichll/pi-sandbox 0.24.0 builds the Sandbox Runtime config with only
+filesystem and network keys, so every sandbox requests a fresh procfs
+(--proc /proc).  An unprivileged container refuses that remount, so each
+sandboxed Bash command dies with:
+
+    bwrap: Can't mount proc on /newroot/proc: Operation not permitted
+
+bubblewrap 0.8 closes every route to fixing that with privileges for a
+non-root caller: setuid mode was removed upstream and the binary hard-dies
+when a non-zero real uid has capabilities ("Unexpected capabilities but not
+setuid").  Running the agent as root is the only capability route, which this
+deployment rejects.
+
+Sandbox Runtime already documents the supported answer for this environment:
+enableWeakerNestedSandbox substitutes "--bind /proc /proc" (see
+linux-sandbox-utils.js, "weaker nested sandbox mode for Docker environments").
+pi-sandbox never passes the flag and its own config parser rejects unknown
+keys, so the patch adds it to toSandboxRuntimeConfig(), gated by
+PI_SANDBOX_WEAKER_NESTED (default on; set to "off" when not nested).
+
+Applied by the Dockerfile after npm install.  Re-verify on every pi-sandbox
+version bump: the build fails if this hunk no longer applies.
+
+--- a/src/policy.ts
++++ b/src/policy.ts
+@@ -303,5 +303,11 @@
+       allowAllUnixSockets: policy.network.allowAllUnixSockets,
+       allowUnixSockets: [...policy.network.allowUnixSockets],
+     },
++    // work image patch: this image always runs nested inside a container, where
++    // an unprivileged bwrap cannot remount a fresh procfs (--proc /proc).  Bind
++    // the container's /proc instead via Sandbox Runtime's documented weaker
++    // nested mode.  Set PI_SANDBOX_WEAKER_NESTED=off to restore --proc when
++    // running the sandbox without container nesting.
++    enableWeakerNestedSandbox: process.env.PI_SANDBOX_WEAKER_NESTED !== "off",
+   };
+ }

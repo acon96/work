@@ -13,17 +13,8 @@ FROM node:24-slim
 # sandbox runtime. Unprivileged user namespaces must be available at runtime:
 # on Kubernetes nodes this may require an AppArmor profile for bwrap or
 # kernel.apparmor_restrict_unprivileged_userns=0.
-#
-# pi-sandbox remounts a fresh procfs inside every sandbox (--proc /proc).
-# Inside an unprivileged container that mount is refused (EPERM) unless the
-# creating process holds CAP_SYS_ADMIN, so the capability is granted as a
-# file capability on the bwrap binary itself. The container must therefore
-# run with CAP_SYS_ADMIN in its bounding set (Compose cap_add / Kubernetes
-# securityContext.capabilities.add) and WITHOUT no-new-privileges, because
-# file capabilities are not gained across execve when NNP is set.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         bubblewrap \
-        libcap2-bin \
         socat \
         ripgrep \
         openssl \
@@ -45,8 +36,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         tar \
         zstd \
         lsof \
-    && rm -rf /var/lib/apt/lists/* \
-    && setcap cap_sys_admin+ep /usr/bin/bwrap
+    && rm -rf /var/lib/apt/lists/*
 
 # install UV to a system-wide location so all users (including agent) can use it
 ENV UV_PYTHON_BIN_DIR=/usr/local/bin/
@@ -108,6 +98,22 @@ RUN npm install --omit=dev 2>&1
 # source so the auto-install has nothing to install, and the entrypoint records
 # the matching dismissal so the reconciliation skips it cleanly.
 RUN rm -rf /app/node_modules/@jmfederico/pi-web/dist/pi-packages/relays
+
+# -- pi-sandbox nested-container patch ----------------------------------------
+# pi-sandbox always asks Sandbox Runtime for a fresh procfs inside each sandbox
+# (--proc /proc).  An unprivileged container refuses that remount, so every
+# sandboxed Bash command dies with "bwrap: Can't mount proc on /newroot/proc:
+# Operation not permitted".  The patch flips Sandbox Runtime's documented
+# enableWeakerNestedSandbox mode (which substitutes --bind /proc /proc), gated
+# by PI_SANDBOX_WEAKER_NESTED.  pi-sandbox exposes no knob for this and its own
+# config parser rejects unknown keys, so the package source is patched.
+# The patch must re-apply on every pi-sandbox version bump: the build fails
+# loudly if the hunk no longer matches.
+COPY patches/ /tmp/work-patches/
+RUN patch -p1 --no-backup-if-mismatch -d /app/node_modules/@erichll/pi-sandbox \
+      < /tmp/work-patches/pi-sandbox-weaker-nested.patch \
+ && rm -rf /tmp/work-patches
+ENV PI_SANDBOX_WEAKER_NESTED=on
 # Expose all npm-installed binaries (pi, pi-web-server, pi-web-sessiond, etc.)
 ENV PATH="/app/node_modules/.bin:${PATH}"
 

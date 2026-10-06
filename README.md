@@ -50,9 +50,11 @@ internal-only networks) to "extension that must be correctly loaded"
 fetch tools use the container's normal egress. Sandbox integrity is verified
 by the container healthcheck, and the policy files are baked into the image
 (root-owned pristine copies re-rendered at startup) and write-protected by
-both extensions. The equivalent Kubernetes controls are a permissive-enough
-seccomp/AppArmor posture for user namespaces on the node, plus `CAP_SYS_ADMIN`
-in the container's capabilities (granted as a file capability to bwrap only).
+both extensions. The equivalent Kubernetes controls are an unconfined
+seccomp/AppArmor posture for user namespaces on the node; the sandbox itself
+runs fully unprivileged (uid 1001, no capabilities) using the image patch in
+`patches/`, because bubblewrap refuses to use privileges at all when it is not
+root.
 
 ---
 
@@ -248,6 +250,7 @@ process exits, not merely when a healthcheck fails.
 | `SSRF_ALLOW_RANGES`   | --                      | Comma-separated CIDRs appended to the pi-web-access SSRF allow-ranges at startup (only needed for private-IP fetch targets) |
 | `LLAMA_SWAP_URL`      | `https://ai.example.com` | llama-swap URL for dynamic model discovery; a local service name is reached directly     |
 | `PI_TITLE_MODEL`      | `llama-swap/little-titles` | Model used to generate session titles                                               |
+| `PI_SANDBOX_WEAKER_NESTED` | `on`               | Nested-container procfs mode for pi-sandbox sandboxes; set `off` only when running the image without container nesting |
 | `PI_SANDBOX_CONFIG`   | `/home/agent/.pi/agent/extensions/pi-sandbox/config.json` | Path the system-prompt extension reads to describe the active network policy |
 | `GIT_SECRET_DIR`      | `./secrets/git`       | Host directory mounted read-only at `/etc/secrets/git`                                  |
 | `WIKI_SECRET_DIR`     | `./secrets/wiki`      | Host directory mounted read-only at `/etc/secrets/wiki`                                 |
@@ -485,6 +488,27 @@ is loaded, and with no broker it falls through to the interactive human
 approval above. Do not add pi-auto-review to `packages` or to an
 `authorizerChain`.
 
+### Running the sandbox nested (procfs mode)
+
+The sandbox runs inside the `work` container, and bubblewrap cannot mount a
+fresh procfs there: an unprivileged container refuses it, so every sandboxed
+command would die with `bwrap: Can't mount proc on /newroot/proc: Operation not
+permitted`. Giving bubblewrap privileges is not an option either -- bubblewrap 0.8
+removed setuid support and aborts when a non-root process holds capabilities --
+so the image patches pi-sandbox to use Sandbox Runtime's documented weaker
+nested mode (`patches/pi-sandbox-weaker-nested.patch`, `PI_SANDBOX_WEAKER_NESTED=on`
+by default).
+
+Weaker mode binds the container's `/proc` into each sandbox instead of mounting
+a new one. What that costs: sandboxed Bash can enumerate the container's process
+table and read `/proc/<pid>/cmdline` and `environ` of the Pi process (same uid).
+That is process metadata only -- pi keeps provider credentials in
+`~/.pi/agent/auth.json`, and the sandbox read policy denies the whole home
+directory except the workspace, so the credential files stay unreachable. Keep
+it that way: do not put API keys in the container environment. If you run the
+image on a host without container nesting, set `PI_SANDBOX_WEAKER_NESTED=off` to
+get the fresh procfs mount back.
+
 ### Human review of tool actions (pi-permission-system)
 
 pi-permission-system is the second gate and the only reviewer in this stack is
@@ -508,13 +532,16 @@ Squid's removal moved enforcement from infrastructure to a pi extension:
   should be treated as unhealthy if the sandbox extension is missing.
 - The Pi process itself (model calls, fetch tools, extensions) is not
   OS-sandboxed and has normal container egress.
-- On Kubernetes, bwrap needs unprivileged user namespaces on the node
-  (AppArmor: bwrap profile or `kernel.apparmor_restrict_unprivileged_userns=0`),
-  a seccomp profile that allows namespace creation, and `CAP_SYS_ADMIN` added
-  to the container (the image grants it as a file capability on bwrap only,
-  so sandboxed commands cannot acquire it directly). Do not set
-  no-new-privileges: it would prevent the setcap'd bwrap from gaining the
-  capability. The container healthcheck fails if sandboxing is broken.
+- On Kubernetes, bwrap needs unprivileged user namespaces on the node:
+  `seccompProfile.type: Unconfined` on the pod, `appArmorProfile.type:
+  Unconfined` (or a bwrap AppArmor profile) on AppArmor-enforcing nodes, and
+  `kernel.apparmor_restrict_unprivileged_userns=0` on the node itself. The
+  container keeps no capabilities, no privilege escalation, and uid 1001;
+  procfs inside each sandbox comes from Sandbox Runtime's weaker nested mode,
+  enabled by the `patches/` build patch. Weaker mode binds the container's
+  `/proc` into sandboxes instead of mounting a fresh one, so sandboxed Bash can
+  see the container's process table -- the outer container is the boundary that
+  matters. The container healthcheck fails if sandboxing is broken.
 
 ---
 

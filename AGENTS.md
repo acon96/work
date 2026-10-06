@@ -30,6 +30,8 @@ work/
 │   ├── web-search.json          pi-web-access policy: SearXNG-only search, SSRF guard ranges
 │   ├── searxng-settings.yml     SearXNG search engine configuration
 │   └── llama-swap.yml           llama-swap service configuration
+├── patches/
+│   └── pi-sandbox-weaker-nested.patch  build-time patch: pi-sandbox nested-container procfs mode
 ├── scripts/
 │   ├── entrypoint.sh            Agent start-up as uid 1001: sessiond, supercronic
 │   ├── healthcheck.sh           Docker healthcheck: verifies bwrap can create sandboxes
@@ -57,9 +59,9 @@ work/
 
 1. **There is only one runtime user: `agent` (uid 1001), and the agent container runs as it.** `USER agent` is set in the image and `user: "1001:1001"` in Compose. There is no sudo, no gosu, no root entrypoint, and no `CAP_*` on the agent container.
 2. **The Pi Web UI port is published on the host loopback only.** The `work` service maps `${PI_WEB_BIND_ADDRESS:-127.0.0.1}:${PI_WEB_PORT:-8504}:8504`. Never widen `PI_WEB_BIND_ADDRESS`: pi-web is not a permission boundary; pi-permission-system and pi-sandbox enforce policy.
-3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure.** The policy JSON files under `config/` ship baked into the image (runtime paths under `~/.pi/agent/`, pristine root-owned copies under `/etc/work/policies/`); there are deliberately NO policy file mounts in Compose or the Kubernetes Deployment. The entrypoint re-renders the runtime configs from the pristine copies at startup, and the only runtime policy knobs are env vars merged in at that point: `PROXY_ALLOWLIST` (comma-separated domains appended to `network.allowedDomains`) and `SSRF_ALLOW_RANGES` (comma-separated CIDRs appended to pi-web-access `ssrf.allowRanges`). Anything beyond those two knobs means editing `config/` and rebuilding the image. `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way. `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
+3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure.** The policy JSON files under `config/` ship baked into the image (runtime paths under `~/.pi/agent/`, pristine root-owned copies under `/etc/work/policies/`); there are deliberately NO policy file mounts in Compose or the Kubernetes Deployment. The entrypoint re-renders the runtime configs from the pristine copies at startup, and the only runtime policy knobs are env vars merged in at that point: `PROXY_ALLOWLIST` (comma-separated domains appended to `network.allowedDomains`) and `SSRF_ALLOW_RANGES` (comma-separated CIDRs appended to pi-web-access `ssrf.allowRanges`). Anything beyond those two knobs means editing `config/` and rebuilding the image. `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
 4. **Tool/file policy is enforced by pi-permission-system.** `config/pi-permission-system-config.json` (installed at `~/.pi/agent/extensions/pi-permission-system/config.json`, read-only) configures human prompts only: no `authorizerChain`, so no model-backed reviewer ever runs. Keep `external_directory: ask` and the secret-file `deny` block.
-5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs `bwrap --ro-bind / / --unshare-all --share-net --proc /proc /bin/true`; if user namespaces, seccomp, AppArmor, or the procfs remount on the host/node block that, the stack reports unhealthy rather than running unenforced. Requirements: usable unprivileged user namespaces (on AppArmor-enforcing nodes: a bwrap profile, or `kernel.apparmor_restrict_unprivileged_userns=0`), a permissive-enough seccomp profile, CAP_SYS_ADMIN in the container's bounding set (`cap_add`/`capabilities.add`), and no-new-privileges disabled (file capabilities are not gained with NNP set). The image ships bwrap with `cap_sys_admin+ep` so the capability is only reachable through the bwrap binary itself.
+5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs a bubblewrap probe with the procfs mode the wrapper will actually request; if user namespaces, seccomp, or AppArmor on the node block it, the stack reports unhealthy rather than running unenforced. Requirements: usable unprivileged user namespaces (on AppArmor-enforcing nodes: an unconfined pod AppArmor profile or a bwrap profile, plus `kernel.apparmor_restrict_unprivileged_userns=0`) and a permissive-enough seccomp profile (`seccompProfile: Unconfined` on Kubernetes). No capabilities are granted and the agent stays uid 1001: the image patches pi-sandbox to run Sandbox Runtime in weaker nested-sandbox mode, which is what makes procfs work inside an unprivileged container (see `patches/`).
 6. **Session data persists via bind mounts** at `/home/agent/.pi/agent/sessions` (from `.pi/agent/sessions`), `/home/agent/.pi/agent/settings.json` (from `.pi/agent/settings.json`), and `/home/agent/.pi/web` (from `.pi/web`). Never hardcode paths to non-persistent locations.
 
 ---
@@ -179,20 +181,52 @@ when deploying (e.g. Kubernetes pod IP for SearXNG).
 
 ### Runtime requirements for pi-sandbox
 
-- `bubblewrap`, `socat`, `ripgrep`, `libcap2-bin` installed in the image (see
-  Dockerfile); bwrap carries a `cap_sys_admin+ep` file capability so it can
-  remount procfs (`--proc /proc`) inside each sandbox.
+- `bubblewrap`, `socat`, `ripgrep` installed in the image (see Dockerfile).
 - Unprivileged user namespaces usable inside the container: keep
-  `seccomp:unconfined` (or an equivalent profile allowing `unshare`/`clone3`),
-  and on AppArmor-enforcing Kubernetes nodes install a bwrap profile or set
-  `kernel.apparmor_restrict_unprivileged_userns=0`.
-- The container must run with `CAP_SYS_ADMIN` added to its bounding set
-  (Compose `cap_add`, Kubernetes `securityContext.capabilities.add`) and
-  must NOT set no-new-privileges: file capabilities are not gained across
-  execve when NNP is set, which would break the setcap'd bwrap.
-- The container healthcheck fails if `bwrap --ro-bind / / --unshare-all
-  --share-net --proc /proc /bin/true` cannot run, so a node that breaks
-  sandboxing shows up as unhealthy rather than silently unenforced.
+  `seccomp:unconfined` (Kubernetes: `seccompProfile.type: Unconfined`), and on
+  AppArmor-enforcing nodes set the pod to `appArmorProfile.type: Unconfined`
+  (or install a bwrap profile) plus
+  `kernel.apparmor_restrict_unprivileged_userns=0` on the node.
+- No capabilities, no root: the container keeps `cap_drop: ALL`,
+  `no-new-privileges`, and uid 1001. bubblewrap 0.8 rejects every privileged
+  route for a non-root caller (setuid removed upstream; it dies outright when a
+  non-zero uid holds capabilities), so capabilities are not an option here --
+  see the header of `patches/pi-sandbox-weaker-nested.patch`.
+- Procfs inside the sandbox comes from that patch: pi-sandbox never sets
+  Sandbox Runtime's `enableWeakerNestedSandbox`, and an unprivileged container
+  refuses the fresh procfs remount (`bwrap: Can't mount proc on
+  /newroot/proc: Operation not permitted`), so every sandboxed command would
+  fail. The patch sets the flag from `PI_SANDBOX_WEAKER_NESTED` (default `on`;
+  `off` restores the `--proc` remount for non-nested hosts). Weaker mode binds
+  the container's `/proc` into each sandbox instead of mounting a fresh one:
+  sandboxed Bash can see the container's process table, which is why the outer
+  container boundary matters. The patch must re-apply on every pi-sandbox
+  version bump; the Docker build fails loudly if the hunk no longer matches.
+- The container healthcheck probes `bwrap` with the matching procfs mode, so a
+  node that breaks sandboxing shows up as unhealthy rather than silently
+  unenforced.
+
+### Patches applied at build time
+
+`patches/*.patch` are applied to installed npm packages in the Dockerfile
+(`patch -p1 -d /app/node_modules/<pkg>`). They exist where upstream exposes no
+knob for something this deployment needs, and each one must carry a header
+explaining why it exists and how to avoid it.
+
+- `pi-sandbox-weaker-nested.patch` -- adds
+  `enableWeakerNestedSandbox` to the Sandbox Runtime config pi-sandbox builds,
+  gated by the `PI_SANDBOX_WEAKER_NESTED` env var.
+
+Maintenance rules:
+
+- Bumping a patched package must re-apply the patch. The Docker build fails if
+  the hunk no longer matches, so regenerate it rather than skipping the step:
+  edit the file in a scratch install, then
+  `diff -u --label a/<path> --label b/<path> orig patched > patches/<name>.patch`.
+- Check the upstream changelog when bumping: if the package grows a config key
+  for the same behavior, delete the patch and configure it instead.
+- Never patch a package to loosen policy (allowlists, permission checks). Patches
+  here only adapt the runtime to running nested inside a container.
 
 ### Adding an allowlisted domain
 
@@ -254,8 +288,9 @@ docker compose exec work curl -sS -o /dev/null -w '%{http_code}\n' https://api.a
 # expected: writes outside the workspace from a Bash tool fail
 #   touch /etc/test -> denied; touch /home/agent/test -> denied
 
-# expected: uid 1001, no sudo, no capabilities
-docker compose exec work sh -c 'id -u; command -v sudo || echo "no sudo"'
+# expected: uid 1001, no sudo, no capabilities (weaker nested sandbox mode is
+# what makes procfs work without them)
+docker compose exec work sh -c 'id -u; command -v sudo || echo "no sudo"; grep -E "^Cap(Bnd|Prm):" /proc/self/status'
 
 # expected: healthcheck goes UNHEALTHY if bwrap cannot sandbox
 docker compose exec work healthcheck
