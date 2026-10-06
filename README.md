@@ -43,18 +43,7 @@ graph TB
 | OS             | uid/gid 1001, no sudo, no root, `cap_drop: ALL`, `no-new-privileges`         | Privilege escalation and OS package installation                                                              |
 | Runtime        | Health probes verify bwrap can create sandboxes, plus Pi Web and supercronic liveness | Silent loss of the sandbox substrate: a node that breaks user namespaces turns the stack unhealthy |
 
-Trust model (changed by the Squid removal): network enforcement moved from
-"infrastructure the agent cannot bypass" (separate proxy container,
-internal-only networks) to "extension that must be correctly loaded"
-(pi-sandbox). The Pi process itself is not OS-sandboxed -- its model calls and
-fetch tools use the container's normal egress. Sandbox integrity is verified
-by the container healthcheck, and the policy files are baked into the image
-(root-owned pristine copies re-rendered at startup) and write-protected by
-both extensions. The equivalent Kubernetes controls are an unconfined
-seccomp/AppArmor posture for user namespaces on the node; the sandbox itself
-runs fully unprivileged (uid 1001, no capabilities) using the image patch in
-`patches/`, because bubblewrap refuses to use privileges at all when it is not
-root.
+Trust model (changed by the Squid removal): network enforcement moved from "infrastructure the agent cannot bypass" (separate proxy container, internal-only networks) to "extension that must be correctly loaded" (pi-sandbox). The Pi process itself is not OS-sandboxed -- its model calls and fetch tools use the container's normal egress. Sandbox integrity is verified by the container healthcheck, and the policy files are baked into the image (root-owned pristine copies re-rendered at startup) and write-protected by both extensions. The equivalent Kubernetes controls are an unconfined seccomp/AppArmor posture for user namespaces on the node; the sandbox itself runs fully unprivileged (uid 1001, no capabilities) using the image patch in `patches/`, because bubblewrap refuses to use privileges at all when it is not root.
 
 ---
 
@@ -67,8 +56,7 @@ root.
 
 ### 1. Build the image
 
-One image is built: the agent (`work-sandbox`). pi-sandbox and its native
-helpers (bubblewrap, socat, ripgrep) are baked in.
+One image is built: the agent (`work-sandbox`). pi-sandbox and its native helpers (bubblewrap, socat, ripgrep) are baked in.
 
 ```bash
 docker compose build
@@ -82,30 +70,20 @@ docker pull ghcr.io/<owner>/work:main
 
 ### 2. Configure
 
-Edit `config/pi-sandbox-config.json` -> `network.allowedDomains` to change the
-domains Bash may reach without prompting. Entries are exact domains,
-subdomain wildcards (`*.example.com`), and optional `:port` restrictions.
+Edit `config/pi-sandbox-config.json` -> `network.allowedDomains` to change the domains Bash may reach without prompting. Entries are exact domains, subdomain wildcards (`*.example.com`), and optional `:port` restrictions.
 
-The sandbox broker only evaluates public hostnames, so local service names
-(`searxng`, `llama-swap`) cannot be allowlisted; reach them through Pi's own
-tools (web_search, fetch_content, model providers), which run outside the Bash
-jail and are gated by pi-permission-system instead.
+The sandbox broker only evaluates public hostnames, so local service names (`searxng`, `llama-swap`) cannot be allowlisted; reach them through Pi's own tools (web_search, fetch_content, model providers), which run outside the Bash jail and are gated by pi-permission-system instead.
 
 ### 3. Run
 
-The default Compose topology mirrors the production deployment: search and
-llama-swap are external services, only mutable runtime state is persisted, and
-Pi Web is published on host loopback. Configure public-safe example endpoints
-through `.env` and start the container:
+The default Compose topology mirrors the production deployment: search and llama-swap are external services, only mutable runtime state is persisted, and Pi Web is published on host loopback. Configure public-safe example endpoints through `.env` and start the container:
 ```bash
 SEARXNG_BASE_URL=https://search.example.com \
 LLAMA_SWAP_URL=https://ai.example.com \
 docker compose up
 ```
 
-For a self-contained development stack, enable the optional local llama-swap
-service and point the agent at the Compose service names (Pi tools reach them;
-sandboxed Bash does not):
+For a self-contained development stack, enable the optional local llama-swap service and point the agent at the Compose service names (Pi tools reach them; sandboxed Bash does not):
 
 ```bash
 SEARXNG_BASE_URL=http://searxng:8080 \
@@ -113,11 +91,7 @@ LLAMA_SWAP_URL=http://llama-swap:8080 \
 docker compose --profile llama-swap up
 ```
 
-Production credentials should be supplied by the deployment platform. The
-public Compose file deliberately does not define repository-specific secret
-names. It mounts ignored `./secrets/git` and `./secrets/wiki` directories at
-the same generic in-container paths as the Kubernetes Secret volumes. Override
-their host locations with `GIT_SECRET_DIR` and `WIKI_SECRET_DIR`.
+Production credentials should be supplied by the deployment platform. The public Compose file deliberately does not define repository-specific secret names. It mounts ignored `./secrets/git` and `./secrets/wiki` directories at the same generic in-container paths as the Kubernetes Secret volumes. Override their host locations with `GIT_SECRET_DIR` and `WIKI_SECRET_DIR`.
 
 The agent container runs three processes as uid 1001:
 
@@ -125,13 +99,9 @@ The agent container runs three processes as uid 1001:
 - **Supercronic** — Cron scheduler for background tasks
 - **Pi sessions** — spawned by the session daemon
 
-Outbound HTTP/HTTPS from the Pi process uses the shared `agent-net` network
-directly; outbound from sandboxed Bash commands goes only through the
-pi-sandbox broker's policy proxy. SearXNG and llama-swap are reached on the
-same network.
+Outbound HTTP/HTTPS from the Pi process uses the shared `agent-net` network directly; outbound from sandboxed Bash commands goes only through the pi-sandbox broker's policy proxy. SearXNG and llama-swap are reached on the same network.
 
-Open the Pi Web UI at **http://127.0.0.1:8504**. Local SearXNG, when enabled,
-is reachable from the agent at **http://searxng:8080**.
+Open the Pi Web UI at **http://127.0.0.1:8504**. Local SearXNG, when enabled, is reachable from the agent at **http://searxng:8080**.
 
 ### Git HTTPS credentials
 
@@ -173,10 +143,7 @@ Pi Web provides a browser-based interface for interacting with the agent:
 2. **Workspaces** — For git repos, create worktrees; for non-git folders, use the project directly
 3. **Sessions** — Start chat sessions with Pi Coding Agent inside a workspace
 
-Chat history and session data persist in the `.pi/agent/sessions` directory on
-the host, bind-mounted into the container. The `work` container publishes the
-Pi Web port on the host loopback only; do not widen `PI_WEB_BIND_ADDRESS` --
-pi-web itself is not a permission boundary, tool gating is.
+Chat history and session data persist in the `.pi/agent/sessions` directory on the host, bind-mounted into the container. The `work` container publishes the Pi Web port on the host loopback only; do not widen `PI_WEB_BIND_ADDRESS` -- pi-web itself is not a permission boundary, tool gating is.
 
 Use `/tools state` to see available tools, `/tools toggle <name>` to enable/disable tools, and other extension commands as needed.
 
@@ -195,10 +162,7 @@ docker compose --profile llama-swap up
 ```bash
 LLAMA_SWAP_URL=https://ai.example.com docker compose up
 ```
-When `LLAMA_SWAP_URL` names a **remote** host, add it to
-`config/pi-sandbox-config.json` -> `allowedDomains` if Bash commands need to
-reach it. A local service name (no dot) is unreachable from sandboxed Bash.
-Configure your pi models to point to this URL for dynamic model discovery.
+When `LLAMA_SWAP_URL` names a **remote** host, add it to `config/pi-sandbox-config.json` -> `allowedDomains` if Bash commands need to reach it. A local service name (no dot) is unreachable from sandboxed Bash. Configure your pi models to point to this URL for dynamic model discovery.
 
 ### Health Monitoring
 
@@ -220,18 +184,13 @@ docker inspect work --format='{{.State.Health.Status}}'
 docker compose ps                # Shows health status for all services
 ```
 
-Sandbox decisions are made by the pi-sandbox broker inside the agent
-container; its activity surfaces in the session (denied tool calls) and in the
-container logs. To confirm what policy is in force, read the mounted policy
-file:
+Sandbox decisions are made by the pi-sandbox broker inside the agent container; its activity surfaces in the session (denied tool calls) and in the container logs. To confirm what policy is in force, read the mounted policy file:
 
 ```bash
 docker compose exec work cat /home/agent/.pi/agent/extensions/pi-sandbox/config.json
 ```
 
-In Kubernetes, the liveness probe restarts the failed container. Docker Compose
-reports an unhealthy status; its restart policy only acts when the container
-process exits, not merely when a healthcheck fails.
+In Kubernetes, the liveness probe restarts the failed container. Docker Compose reports an unhealthy status; its restart policy only acts when the container process exits, not merely when a healthcheck fails.
 
 ---
 
@@ -273,15 +232,7 @@ pi-permission-system policy. Baked into the image at `~/.pi/agent/extensions/pi-
 
 ### config/web-search.json
 
-pi-web-access policy. Baked into the image at `~/.pi/agent/web-search.json`.
-`webSearch.allowedProviders: ["searxng"]` pins search to the configured SearXNG
-endpoint (`SEARXNG_BASE_URL`) with no fallback to hosted search providers.
-`ssrf.allowRanges` exempts only the internal SearXNG container address
-(`172.28.0.10/32`, pinned in docker-compose.yml) from the SSRF guard, which
-otherwise blocks loopback and private targets for `fetch_content`. On
-Kubernetes with a public SearXNG endpoint no range is needed; if the endpoint
-resolves to a private address, pass it via the `SSRF_ALLOW_RANGES` env var
-(comma-separated CIDRs, appended at startup).
+pi-web-access policy. Baked into the image at `~/.pi/agent/web-search.json`. `webSearch.allowedProviders: ["searxng"]` pins search to the configured SearXNG endpoint (`SEARXNG_BASE_URL`) with no fallback to hosted search providers. `ssrf.allowRanges` exempts only the internal SearXNG container address (`172.28.0.10/32`, pinned in docker-compose.yml) from the SSRF guard, which otherwise blocks loopback and private targets for `fetch_content`. On Kubernetes with a public SearXNG endpoint no range is needed; if the endpoint resolves to a private address, pass it via the `SSRF_ALLOW_RANGES` env var (comma-separated CIDRs, appended at startup).
 
 ### config/searxng-settings.yml
 
@@ -289,9 +240,7 @@ SearXNG configuration file.  Defines enabled search engines, safe-search level, 
 
 ### config/llama-swap.yml
 
-llama-swap configuration file. Defines health check timeouts, log levels, server
-macros, and context-length shortcuts. Mounted read-only into the local
-llama-swap container when running with `--profile local-services`.
+llama-swap configuration file. Defines health check timeouts, log levels, server macros, and context-length shortcuts. Mounted read-only into the local llama-swap container when running with `--profile local-services`.
 
 ### config/agent.gitconfig
 
@@ -340,10 +289,7 @@ Custom commands provided by local extensions:
 
 ### Session persistence
 
-Compose persists session, Pi Web, and scheduler state in the `work-sessions`,
-`work-web`, and `work-scheduled` named volumes. Global settings and models remain
-image-owned, matching the Kubernetes deployment. Kubernetes mounts the three
-state directories from dedicated PVC subpaths.
+Compose persists session, Pi Web, and scheduler state in the `work-sessions`, `work-web`, and `work-scheduled` named volumes. Global settings and models remain image-owned, matching the Kubernetes deployment. Kubernetes mounts the three state directories from dedicated PVC subpaths.
 
 ### Scheduler
 
@@ -453,95 +399,41 @@ Skills are loaded from `skills/` (declared in `package.json` → `pi.skills`) an
 
 ### Sandbox network flow (pi-sandbox)
 
-Every Bash tool invocation runs inside a bubblewrap sandbox with its own
-mount and network namespaces. The sandbox's only network exit is the
-pi-sandbox broker's policy proxy, which evaluates each connection against
-`config/pi-sandbox-config.json`:
+Every Bash tool invocation runs inside a bubblewrap sandbox with its own mount and network namespaces. The sandbox's only network exit is the pi-sandbox broker's policy proxy, which evaluates each connection against `config/pi-sandbox-config.json`:
 
 1. A matching `deniedDomains` entry rejects the connection.
 2. Otherwise a matching `allowedDomains` entry permits it silently.
-3. Otherwise the connection pauses and **the human is prompted in the session
-   UI**: "Sandbox approval required: connect <host>:<port>" with
-   "Allow this exact operation once" / "Deny". An approval applies to that
-   one connection; a new connection to the same host prompts again.
+3. Otherwise the connection pauses and **the human is prompted in the session UI**: "Sandbox approval required: connect <host>:<port>" with "Allow this exact operation once" / "Deny". An approval applies to that one connection; a new connection to the same host prompts again.
 
-This is the dynamic replacement for the old open-GET ("mode B") convenience:
-new domains work immediately, but only a human clicking in the UI can open
-them, and only once per connection. No file edit, no reload, and no container
-restart is involved. Headless sessions (scheduler tasks) have no UI, so
-unmatched destinations there are denied -- schedule against `allowedDomains`.
+This is the dynamic replacement for the old open-GET ("mode B") convenience: new domains work immediately, but only a human clicking in the UI can open them, and only once per connection. No file edit, no reload, and no container restart is involved. Headless sessions (scheduler tasks) have no UI, so unmatched destinations there are denied -- schedule against `allowedDomains`.
 
-Filesystem side of the same jail: writes outside the current workspace fail
-closed, reads outside allowed regions fail closed, common secrets (`.env`,
-`*.pem`, `*.key`, ...) are write-denied inside the workspace, and each command
-gets a private temp directory. The policy config itself is write-protected
-against sandboxed commands.
+Filesystem side of the same jail: writes outside the current workspace fail closed, reads outside allowed regions fail closed, common secrets (`.env`, `*.pem`, `*.key`, ...) are write-denied inside the workspace, and each command gets a private temp directory. The policy config itself is write-protected against sandboxed commands.
 
-`allowedDomains` is the silent baseline; keep it to the hosts used by
-scheduled/headless tasks and high-frequency operations. Every allowlisted
-domain is a potential exfiltration endpoint, so keep the list narrow.
+`allowedDomains` is the silent baseline; keep it to the hosts used by scheduled/headless tasks and high-frequency operations. Every allowlisted domain is a potential exfiltration endpoint, so keep the list narrow.
 
-The model-backed reviewer (`pi-auto-review`) ships as a dependency of
-pi-sandbox but is deliberately never enabled as an extension: pi-sandbox
-routes its network asks through a broker that only exists when pi-auto-review
-is loaded, and with no broker it falls through to the interactive human
-approval above. Do not add pi-auto-review to `packages` or to an
-`authorizerChain`.
+The model-backed reviewer (`pi-auto-review`) ships as a dependency of pi-sandbox but is deliberately never enabled as an extension: pi-sandbox routes its network asks through a broker that only exists when pi-auto-review is loaded, and with no broker it falls through to the interactive human approval above. Do not add pi-auto-review to `packages` or to an `authorizerChain`.
 
 ### Running the sandbox nested (procfs mode)
 
-The sandbox runs inside the `work` container, and bubblewrap cannot mount a
-fresh procfs there: an unprivileged container refuses it, so every sandboxed
-command would die with `bwrap: Can't mount proc on /newroot/proc: Operation not
-permitted`. Giving bubblewrap privileges is not an option either -- bubblewrap 0.8
-removed setuid support and aborts when a non-root process holds capabilities --
-so the image patches pi-sandbox to use Sandbox Runtime's documented weaker
-nested mode (`patches/pi-sandbox-weaker-nested.patch`, `PI_SANDBOX_WEAKER_NESTED=on`
-by default).
+The sandbox runs inside the `work` container, and bubblewrap cannot mount a fresh procfs there: an unprivileged container refuses it, so every sandboxed command would die with `bwrap: Can't mount proc on /newroot/proc: Operation not permitted`. Giving bubblewrap privileges is not an option either -- bubblewrap 0.8 removed setuid support and aborts when a non-root process holds capabilities -- so the image patches pi-sandbox to use Sandbox Runtime's documented weaker nested mode (`patches/pi-sandbox-weaker-nested.patch`, `PI_SANDBOX_WEAKER_NESTED=on` by default).
 
-Weaker mode binds the container's `/proc` into each sandbox instead of mounting
-a new one. What that costs: sandboxed Bash can enumerate the container's process
-table and read `/proc/<pid>/cmdline` and `environ` of the Pi process (same uid).
-That is process metadata only -- pi keeps provider credentials in
-`~/.pi/agent/auth.json`, and the sandbox read policy denies the whole home
-directory except the workspace, so the credential files stay unreachable. Keep
-it that way: do not put API keys in the container environment. If you run the
-image on a host without container nesting, set `PI_SANDBOX_WEAKER_NESTED=off` to
-get the fresh procfs mount back.
+Weaker mode binds the container's `/proc` into each sandbox instead of mounting a new one. What that costs: sandboxed Bash can enumerate the container's process table and read `/proc/<pid>/cmdline` and `environ` of the Pi process (same uid). That is process metadata only -- pi keeps provider credentials in `~/.pi/agent/auth.json`, and the sandbox read policy denies the whole home directory except the workspace, so the credential files stay unreachable. Keep it that way: do not put API keys in the container environment. If you run the image on a host without container nesting, set `PI_SANDBOX_WEAKER_NESTED=off` to get the fresh procfs mount back.
 
 ### Human review of tool actions (pi-permission-system)
 
-pi-permission-system is the second gate and the only reviewer in this stack is
-the human: no `authorizerChain` is configured, so no model-backed reviewer
-(`pi-permission-model-judge`, `pi-auto-review`) ever runs.
+pi-permission-system is the second gate and the only reviewer in this stack is the human: no `authorizerChain` is configured, so no model-backed reviewer (`pi-permission-model-judge`, `pi-auto-review`) ever runs.
 
-- `external_directory: "ask"` -- any read/write/edit or Bash path outside the
-  session's CWD prompts in the session UI. This is what enforces per-workspace
-  folder usage for Pi's native file tools, which the Bash sandbox does not cover.
-- `path` deny block -- `.env` variants, keys, `~/.ssh/*`, git credentials, and
-  both security config files are denied across all tools at once, symlink-safe.
-- Bash command patterns -- `deny` on `sudo` and `rm -rf /` patterns; everything
-  else allowed (the OS sandbox governs what those commands can actually reach).
+- `external_directory: "ask"` -- any read/write/edit or Bash path outside the session's CWD prompts in the session UI. This is what enforces per-workspace folder usage for Pi's native file tools, which the Bash sandbox does not cover.
+- `path` deny block -- `.env` variants, keys, `~/.ssh/*`, git credentials, and both security config files are denied across all tools at once, symlink-safe.
+- Bash command patterns -- `deny` on `sudo` and `rm -rf /` patterns; everything else allowed (the OS sandbox governs what those commands can actually reach).
 
 ### Residual trust
 
 Squid's removal moved enforcement from infrastructure to a pi extension:
 
-- If pi-sandbox fails to load, Bash runs unsandboxed. Mitigations: the policy
-  files are baked/bound read-only, `subagents.provider: "off"`, and the stack
-  should be treated as unhealthy if the sandbox extension is missing.
-- The Pi process itself (model calls, fetch tools, extensions) is not
-  OS-sandboxed and has normal container egress.
-- On Kubernetes, bwrap needs unprivileged user namespaces on the node:
-  `seccompProfile.type: Unconfined` on the pod, `appArmorProfile.type:
-  Unconfined` (or a bwrap AppArmor profile) on AppArmor-enforcing nodes, and
-  `kernel.apparmor_restrict_unprivileged_userns=0` on the node itself. The
-  container keeps no capabilities, no privilege escalation, and uid 1001;
-  procfs inside each sandbox comes from Sandbox Runtime's weaker nested mode,
-  enabled by the `patches/` build patch. Weaker mode binds the container's
-  `/proc` into sandboxes instead of mounting a fresh one, so sandboxed Bash can
-  see the container's process table -- the outer container is the boundary that
-  matters. The container healthcheck fails if sandboxing is broken.
+- If pi-sandbox fails to load, Bash runs unsandboxed. Mitigations: the policy files are baked/bound read-only, `subagents.provider: "off"`, and the stack should be treated as unhealthy if the sandbox extension is missing.
+- The Pi process itself (model calls, fetch tools, extensions) is not OS-sandboxed and has normal container egress.
+- On Kubernetes, bwrap needs unprivileged user namespaces on the node: `seccompProfile.type: Unconfined` on the pod, `appArmorProfile.type: Unconfined` (or a bwrap AppArmor profile) on AppArmor-enforcing nodes, and `kernel.apparmor_restrict_unprivileged_userns=0` on the node itself. The container keeps no capabilities, no privilege escalation, and uid 1001; procfs inside each sandbox comes from Sandbox Runtime's weaker nested mode, enabled by the `patches/` build patch. Weaker mode binds the container's `/proc` into sandboxes instead of mounting a fresh one, so sandboxed Bash can see the container's process table -- the outer container is the boundary that matters. The container healthcheck fails if sandboxing is broken.
 
 ---
 

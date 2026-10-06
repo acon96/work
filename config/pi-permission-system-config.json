@@ -1,7 +1,6 @@
 {
   "permission": {
     "*": "allow",
-    "external_directory": "ask",
     "path": {
       "*": "allow",
       ".env": "deny",
@@ -11,7 +10,16 @@
       "*.pem": "deny",
       "*.key": "deny",
       "*.p12": "deny",
-      "*.pfx": "deny",
+      "*.pfx": "deny"
+    },
+    "external_directory": {
+      "*": "ask",
+      "/tmp/*": "allow"
+    },
+    "external_directory_read": { 
+      "/workspace/*": "allow"
+    },
+    "path_write": {
       "~/.ssh/*": "deny",
       "~/.git-credentials": "deny",
       "~/.pi/agent/extensions/pi-sandbox/config.json": "deny",
@@ -19,6 +27,11 @@
       "~/.pi/agent/web-search.json": "deny",
       "~/.pi/agent/settings.json": "deny",
       "~/.pi/agent/models.json": "deny"
+    },
+    "mcp": { 
+      "*": "ask",
+      "mcp_status": "allow",
+      "mcp_list": "allow"
     },
     "bash": {
       "*": "allow",

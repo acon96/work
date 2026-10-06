@@ -3,54 +3,31 @@
 This document is for AI agents (and humans) doing further development on this repository.
 
 ## General Behavior
-1. Do not use special symbols or non-standard Unicode characters because they can cause encoding issues. Prefer ASCII character art such as `->`.
+1. Do not use special symbols or non-standard Unicode characters because they can cause encoding issues. Prefer ASCII character art such as `->`, `...`, or `--`.
+2. When commenting code, only add comments that are necessary to explain the **current state** of the code. Do NOT explain the change being made, the prior state of the code, the regression or bug being fixed, or the reason for the change. Those belong in the commit message, not in the code comments.
+3. Do not unnecessarily wrap lines of code or documentation files. Code should be wrapped at a logical spot in the line, and documentation should only use newlines for line breaks between paragraphs or sections. Markdown handles paragraph wrapping automatically, so do not add newlines in the middle of paragraphs.
 
 ---
 
 ## Repository layout
 
+> Note: Do NOT update this layout unless there are actual structural changes to the repo. It causes unnecessary churn in this file.
+
 ```
 work/
-├── Dockerfile                   Agent image (Node 24 LTS); uid 1001, no root/sudo/proxy;
-│                                includes bubblewrap/socat/ripgrep for pi-sandbox
-├── docker-compose.yml           Compose: work + searxng (+ llama-swap)
-├── package.json                 Pinned pi-extensions dependencies (pi 1.x)
-├── .pi/
-│   ├── agent/
-│   │   ├── settings.json        pi global settings (default provider, extensions, packages)
-│   │   ├── models.json          pi models config (llama-swap field mapping)
-│   │   └── sessions/            Persistent session data (bind-mounted)
-│   ├── scheduled/               Scheduler state: crontab + run history/dirs (bind-mounted)
-│   └── web/                     Pi Web state (bind-mounted)
-├── config/
-│   ├── agent.gitconfig          Default git config for agent user
-│   ├── pi-sandbox-config.json   pi-sandbox policy: domain baseline + human approval, subagents off
-│   ├── pi-permission-system-config.json
-│   │                            pi-permission-system policy: human prompts, no authorizerChain
-│   ├── web-search.json          pi-web-access policy: SearXNG-only search, SSRF guard ranges
-│   ├── searxng-settings.yml     SearXNG search engine configuration
-│   └── llama-swap.yml           llama-swap service configuration
-├── patches/
-│   └── pi-sandbox-weaker-nested.patch  build-time patch: pi-sandbox nested-container procfs mode
-├── scripts/
-│   ├── entrypoint.sh            Agent start-up as uid 1001: sessiond, supercronic
-│   ├── healthcheck.sh           Docker healthcheck: verifies bwrap can create sandboxes
-│   ├── build-plugins.sh         Compiles TypeScript pi-web plugins to JS during Docker build
-│   └── scheduler-run.sh         Cron job wrapper: decodes task, runs pi, persists diagnostics
-├── extensions/
-│   ├── chat-titles/            pi extension: auto-generates concise session titles from first user prompt
-│   ├── system-prompt/           pi extension: injects sandbox env details into system prompt
-│   ├── llama-swap/              pi extension: llama-swap dynamic model discovery + field mapping
-│   ├── scheduler/               pi extension: scheduled tasks via supercronic
-│   ├── todo/                    pi extension: persistent todo list
-│   └── superagent/              pi extension: weak-model-gathers, strong-model-plans hybrid
-├── skills/
-│   ├── notify/                  pi skill: ntfy.sh push notifications
-│   ├── superagent/              pi skill: superagent planning workflow guide
-│   └── wiki-js/                 pi skill: operational workflow for Wiki.js page/asset/nav management
-├── pi-web-plugins/              Pi Web plugin overrides (merged into npm package dist)
-│   └── scheduler-history/       Pi Web plugin: workspace panel for scheduled run history
-└── .github/workflows/docker.yml CI/CD: builds & publishes the image on push to main
+|-- .pi/               Pi agent and web state
+|   |-- agent/         Agent settings and sessions
+|   |   \-- sessions/  Persistent session data
+|   |-- scheduled/     Scheduler state and run history
+|   \-- web/           Pi Web state
+|-- config/            Runtime and service configuration
+|-- patches/           Build-time dependency patches
+|-- scripts/           Container and scheduler scripts
+|-- extensions/        Pi agent extensions
+|-- skills/            Pi agent skills
+|-- pi-web-plugins/    Pi Web plugin overrides
+\-- .github/
+    \-- workflows/    CI/CD workflows
 ```
 
 ---
@@ -125,8 +102,7 @@ The `pi-superagent` extension inverts the traditional agent hierarchy: instead o
 - Uses pi's existing provider/model configuration (via `pi login`)
 - Model is specified per-invocation in tool parameters
 
-**Usage:**
-The local model calls the `superagent_plan` tool with:
+**Usage:** The local model calls the `superagent_plan` tool with:
 - `provider` — provider name (e.g., "anthropic", "openai", "openrouter")
 - `model` — model ID (e.g., "claude-sonnet-4-20250514", "o1", "gpt-4o")
 - `userQuery` — the task that needs planning
@@ -169,112 +145,48 @@ Relays are deliberately disabled: pi-web's session daemon auto-installs the `@jm
 |---------------|---------|------------------------------------------|
 | `agent-net`   | yes (subnet pinned to 172.28.0.0/24) | `work`, `searxng` (static IP 172.28.0.10), `llama-swap` |
 
-Squid and the separate proxy container are gone. Network policy for Bash is
-enforced per-command inside `work` by pi-sandbox (bubblewrap network
-namespaces + policy broker). The Pi process itself and the pi-sandbox broker
-use `agent-net` directly; sandboxed Bash commands get a private namespace
-whose only exit is the broker's policy proxy.
+Squid and the separate proxy container are gone. Network policy for Bash is enforced per-command inside `work` by pi-sandbox (bubblewrap network namespaces + policy broker). The Pi process itself and the pi-sandbox broker use `agent-net` directly; sandboxed Bash commands get a private namespace whose only exit is the broker's policy proxy.
 
-The `agent-net` subnet is pinned so the SearXNG address in
-`config/web-search.json` -> `ssrf.allowRanges` stays stable; update both together
-when deploying (e.g. Kubernetes pod IP for SearXNG).
+The `agent-net` subnet is pinned so the SearXNG address in `config/web-search.json` -> `ssrf.allowRanges` stays stable; update both together when deploying (e.g. Kubernetes pod IP for SearXNG).
 
 ### Runtime requirements for pi-sandbox
 
 - `bubblewrap`, `socat`, `ripgrep` installed in the image (see Dockerfile).
-- Unprivileged user namespaces usable inside the container: keep
-  `seccomp:unconfined` (Kubernetes: `seccompProfile.type: Unconfined`), and on
-  AppArmor-enforcing nodes set the pod to `appArmorProfile.type: Unconfined`
-  (or install a bwrap profile) plus
-  `kernel.apparmor_restrict_unprivileged_userns=0` on the node.
-- No capabilities, no root: the container keeps `cap_drop: ALL`,
-  `no-new-privileges`, and uid 1001. bubblewrap 0.8 rejects every privileged
-  route for a non-root caller (setuid removed upstream; it dies outright when a
-  non-zero uid holds capabilities), so capabilities are not an option here --
-  see the header of `patches/pi-sandbox-weaker-nested.patch`.
-- Procfs inside the sandbox comes from that patch: pi-sandbox never sets
-  Sandbox Runtime's `enableWeakerNestedSandbox`, and an unprivileged container
-  refuses the fresh procfs remount (`bwrap: Can't mount proc on
-  /newroot/proc: Operation not permitted`), so every sandboxed command would
-  fail. The patch sets the flag from `PI_SANDBOX_WEAKER_NESTED` (default `on`;
-  `off` restores the `--proc` remount for non-nested hosts). Weaker mode binds
-  the container's `/proc` into each sandbox instead of mounting a fresh one:
-  sandboxed Bash can see the container's process table, which is why the outer
-  container boundary matters. The patch must re-apply on every pi-sandbox
-  version bump; the Docker build fails loudly if the hunk no longer matches.
-- The container healthcheck probes `bwrap` with the matching procfs mode, so a
-  node that breaks sandboxing shows up as unhealthy rather than silently
-  unenforced.
+- Unprivileged user namespaces usable inside the container: keep `seccomp:unconfined` (Kubernetes: `seccompProfile.type: Unconfined`), and on AppArmor-enforcing nodes set the pod to `appArmorProfile.type: Unconfined` (or install a bwrap profile) plus `kernel.apparmor_restrict_unprivileged_userns=0` on the node.
+- No capabilities, no root: the container keeps `cap_drop: ALL`, `no-new-privileges`, and uid 1001. bubblewrap 0.8 rejects every privileged route for a non-root caller (setuid removed upstream; it dies outright when a non-zero uid holds capabilities), so capabilities are not an option here -- see the header of `patches/pi-sandbox-weaker-nested.patch`.
+- Procfs inside the sandbox comes from that patch: pi-sandbox never sets Sandbox Runtime's `enableWeakerNestedSandbox`, and an unprivileged container refuses the fresh procfs remount (`bwrap: Can't mount proc on /newroot/proc: Operation not permitted`), so every sandboxed command would fail. The patch sets the flag from `PI_SANDBOX_WEAKER_NESTED` (default `on`; `off` restores the `--proc` remount for non-nested hosts). Weaker mode binds the container's `/proc` into each sandbox instead of mounting a fresh one: sandboxed Bash can see the container's process table, which is why the outer container boundary matters. The patch must re-apply on every pi-sandbox version bump; the Docker build fails loudly if the hunk no longer matches.
+- The container healthcheck probes `bwrap` with the matching procfs mode, so a node that breaks sandboxing shows up as unhealthy rather than silently unenforced.
 
 ### Patches applied at build time
 
-`patches/*.patch` are applied to installed npm packages in the Dockerfile
-(`patch -p1 -d /app/node_modules/<pkg>`). They exist where upstream exposes no
-knob for something this deployment needs, and each one must carry a header
-explaining why it exists and how to avoid it.
+`patches/*.patch` are applied to installed npm packages in the Dockerfile (`patch -p1 -d /app/node_modules/<pkg>`). They exist where upstream exposes no knob for something this deployment needs, and each one must carry a header explaining why it exists and how to avoid it.
 
-- `pi-sandbox-weaker-nested.patch` -- adds
-  `enableWeakerNestedSandbox` to the Sandbox Runtime config pi-sandbox builds,
-  gated by the `PI_SANDBOX_WEAKER_NESTED` env var.
+- `pi-sandbox-weaker-nested.patch` -- adds `enableWeakerNestedSandbox` to the Sandbox Runtime config pi-sandbox builds, gated by the `PI_SANDBOX_WEAKER_NESTED` env var.
 
 Maintenance rules:
 
-- Bumping a patched package must re-apply the patch. The Docker build fails if
-  the hunk no longer matches, so regenerate it rather than skipping the step:
-  edit the file in a scratch install, then
-  `diff -u --label a/<path> --label b/<path> orig patched > patches/<name>.patch`.
-- Check the upstream changelog when bumping: if the package grows a config key
-  for the same behavior, delete the patch and configure it instead.
-- Never patch a package to loosen policy (allowlists, permission checks). Patches
-  here only adapt the runtime to running nested inside a container.
+- Bumping a patched package must re-apply the patch. The Docker build fails if the hunk no longer matches, so regenerate it rather than skipping the step: edit the file in a scratch install, then `diff -u --label a/<path> --label b/<path> orig patched > patches/<name>.patch`.
+- Check the upstream changelog when bumping: if the package grows a config key for the same behavior, delete the patch and configure it instead.
+- Never patch a package to loosen policy (allowlists, permission checks). Patches here only adapt the runtime to running nested inside a container.
 
 ### Adding an allowlisted domain
 
 Two ways:
 
-1. **Per-connection (default flow):** Bash reaching a domain that is not in
-   `network.allowedDomains` prompts the human in the session UI ("Allow this
-   exact operation once" / "Deny"). The approval covers that one
-   hostname:port connection; a new connection prompts again. No file edit and
-   no reload needed. Sessions without UI (scheduler tasks) are denied.
-2. **Permanent baseline:** set `PROXY_ALLOWLIST` (comma-separated domains)
-   in the deployment environment. The entrypoint merges those domains into
-   the baked `network.allowedDomains` at startup (see Core invariant 3);
-   apply by restarting the container/pod. Entries are exact domains,
-   strict-subdomain wildcards (`*.example.com` -- note this does NOT match
-   the apex domain), and optional `:port` restrictions. For durable base
-   changes, edit `config/pi-sandbox-config.json` and rebuild the image.
+1. **Per-connection (default flow):** Bash reaching a domain that is not in `network.allowedDomains` prompts the human in the session UI ("Allow this exact operation once" / "Deny"). The approval covers that one hostname:port connection; a new connection prompts again. No file edit and no reload needed. Sessions without UI (scheduler tasks) are denied.
+2. **Permanent baseline:** set `PROXY_ALLOWLIST` (comma-separated domains) in the deployment environment. The entrypoint merges those domains into the baked `network.allowedDomains` at startup (see Core invariant 3); apply by restarting the container/pod. Entries are exact domains, strict-subdomain wildcards (`*.example.com` -- note this does NOT match the apex domain), and optional `:port` restrictions. For durable base changes, edit `config/pi-sandbox-config.json` and rebuild the image.
 
-The broker only evaluates **public** hostnames (names with a dot, resolving
-outside private/loopback ranges). Sandbox-ed Bash therefore can never reach
-service names like `searxng` or `llama-swap` -- those must go through Pi's own
-tools (web_search, model providers), which run outside the Bash jail. If a
-Bash command genuinely needs an internal service, that is a design decision
-to make explicitly, not an allowlist edit.
+The broker only evaluates **public** hostnames (names with a dot, resolving outside private/loopback ranges). Sandbox-ed Bash therefore can never reach service names like `searxng` or `llama-swap` -- those must go through Pi's own tools (web_search, model providers), which run outside the Bash jail. If a Bash command genuinely needs an internal service, that is a design decision to make explicitly, not an allowlist edit.
 
 ### Changing policy (operator only)
 
-Policy is baked into the image under `/home/agent/.pi/agent/` and
-`/home/agent/.pi/agent/extensions/` -- no policy file mounts. The only
-operator runtime knobs are the `PROXY_ALLOWLIST` and `SSRF_ALLOW_RANGES` env
-vars (see Core invariant 3). There is deliberately no agent-side control path
-(no tool, no slash command, no script in the agent image); do not add one
-back. Keep `subagents.provider: "off"` and `hostIPC.mode: "off"`.
+Policy is baked into the image under `/home/agent/.pi/agent/` and `/home/agent/.pi/agent/extensions/` -- no policy file mounts. The only operator runtime knobs are the `PROXY_ALLOWLIST` and `SSRF_ALLOW_RANGES` env vars (see Core invariant 3). There is deliberately no agent-side control path (no tool, no slash command, no script in the agent image); do not add one back. Keep `subagents.provider: "off"` and `hostIPC.mode: "off"`.
 
-The network review chain is: static deny -> static allow -> human prompt.
-The model-backed reviewer (`pi-auto-review`) is intentionally never enabled:
-do not add it to `packages` in settings.json or to `authorizerChain` in the
-pi-permission-system config. With no reviewer broker registered, pi-sandbox's
-`approval.ts` falls through to its built-in interactive UI prompt. Setting
-`network.strictAllowlist: true` would skip the human prompt and deny
-everything unmatched -- use only for locked-down one-shot runs.
+The network review chain is: static deny -> static allow -> human prompt. The model-backed reviewer (`pi-auto-review`) is intentionally never enabled: do not add it to `packages` in settings.json or to `authorizerChain` in the pi-permission-system config. With no reviewer broker registered, pi-sandbox's `approval.ts` falls through to its built-in interactive UI prompt. Setting `network.strictAllowlist: true` would skip the human prompt and deny everything unmatched -- use only for locked-down one-shot runs.
 
 ### Containment checks
 
-Run these after any topology, image, or policy change. Note these checks are
-run via `docker compose exec`, i.e. OUTSIDE a Pi Bash tool call, so they test
-the container, not the pi-sandbox broker. To test pi-sandbox itself, run the
-same probes from inside a Pi session's Bash tool.
+Run these after any topology, image, or policy change. Note these checks are run via `docker compose exec`, i.e. OUTSIDE a Pi Bash tool call, so they test the container, not the pi-sandbox broker. To test pi-sandbox itself, run the same probes from inside a Pi session's Bash tool.
 
 ```bash
 # expected to succeed from the Pi process (egress exists for the container)
@@ -296,8 +208,7 @@ docker compose exec work sh -c 'id -u; command -v sudo || echo "no sudo"; grep -
 docker compose exec work healthcheck
 ```
 
-Passing these in Compose demonstrates the data path. It is **not** evidence that
-Kubernetes NetworkPolicy works; the cluster needs the same checks re-run.
+Passing these in Compose demonstrates the data path. It is **not** evidence that Kubernetes NetworkPolicy works; the cluster needs the same checks re-run.
 
 ---
 
@@ -319,7 +230,7 @@ All off-the-shelf pi extensions are declared as `dependencies` with pinned versi
 
 ### .pi/agent/settings.json
 
-This file is bind-mounted into the container at `/home/agent/.pi/agent/settings.json`.  It configures:
+This file is bind-mounted into the container at `/home/agent/.pi/agent/settings.json`. It configures:
 - `defaultProvider` / `defaultModel`: default model for sessions
 - `compaction`: context compaction settings (reserve tokens, keep recent tokens)
 - `retry`: retry settings for failed requests
@@ -334,11 +245,7 @@ This file is bind-mounted into the container at `/home/agent/.pi/agent/models.js
 
 ### SearXNG
 
-The SearXNG endpoint is configured via the `SEARXNG_BASE_URL` env var, read at
-runtime by the `pi-web-access` extension (`web_search` tool). Search providers
-are pinned to SearXNG via `config/web-search.json` -> `webSearch.allowedProviders`;
-the SSRF guard's `ssrf.allowRanges` must cover the SearXNG address for it to be
-reachable.
+The SearXNG endpoint is configured via the `SEARXNG_BASE_URL` env var, read at runtime by the `pi-web-access` extension (`web_search` tool). Search providers are pinned to SearXNG via `config/web-search.json` -> `webSearch.allowedProviders`; the SSRF guard's `ssrf.allowRanges` must cover the SearXNG address for it to be reachable.
 
 ---
 
@@ -348,11 +255,7 @@ Pi Web is a web control plane for Pi Coding Agent with a split-process architect
 - **Session daemon** (`pi-web-sessiond`): owns active Pi session runtimes, listens on Unix socket at `~/.pi-web/sessiond.sock`
 - **Web server** (`pi-web-server`): serves the API and browser UI, defaults to `127.0.0.1:8504`
 
-In this deployment the web server binds `0.0.0.0:8504` **inside the agent
-container**, and the `work` service publishes that port on the host loopback
-only (`PI_WEB_BIND_ADDRESS` defaults to `127.0.0.1`). Do not change the bind
-host back to `127.0.0.1` inside the container: Docker's port publishing
-connects to the container's bridge address, so the UI would become unreachable.
+In this deployment the web server binds `0.0.0.0:8504` **inside the agent container**, and the `work` service publishes that port on the host loopback only (`PI_WEB_BIND_ADDRESS` defaults to `127.0.0.1`). Do not change the bind host back to `127.0.0.1` inside the container: Docker's port publishing connects to the container's bridge address, so the UI would become unreachable.
 
 ### Environment variables
 
@@ -375,9 +278,7 @@ Pi Web stores its state at `~/.pi-web/`:
 
 This directory is bind-mounted to `.pi/web/` on the host for persistence.
 
-Pi Web upgrades to WebSockets for workspace terminals (`…/terminals/<id>/socket`)
-and for its event stream (`/api/machines/local/events`). Browsers connect
-directly to the published port; there is no reverse proxy in the stack.
+Pi Web upgrades to WebSockets for workspace terminals (`…/terminals/<id>/socket`) and for its event stream (`/api/machines/local/events`). Browsers connect directly to the published port; there is no reverse proxy in the stack.
 
 ### Core model
 
@@ -392,17 +293,13 @@ Pi Web reuses existing Pi auth and model configuration from `~/.pi/agent/`.
 
 ## CI/CD
 
-The GitHub Actions workflow at `.github/workflows/docker.yml` builds and pushes
-the single agent image (`Dockerfile`) to `ghcr.io/<owner>/<repo>`, on every push
-to `main`. The separate `proxy/Dockerfile` and its matrix leg were removed with
-the Squid apparatus.
+The GitHub Actions workflow at `.github/workflows/docker.yml` builds and pushes the single agent image (`Dockerfile`) to `ghcr.io/<owner>/<repo>`, on every push to `main`. The separate `proxy/Dockerfile` and its matrix leg were removed with the Squid apparatus.
 
 Images are tagged with:
 - branch name (e.g. `main`)
 - git SHA prefix (`sha-abc1234`)
 
-(semver patterns are configured in `metadata-action`, but the workflow is not
-triggered by tag pushes today.)
+(semver patterns are configured in `metadata-action`, but the workflow is not triggered by tag pushes today.)
 
 ---
 
