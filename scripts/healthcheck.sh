@@ -9,25 +9,18 @@ PI_WEB_SESSIOND_SOCKET="${PI_WEB_SESSIOND_SOCKET:-/tmp/pi-web/sessiond.sock}"
 # Check the pi-sandbox execution substrate. pi-sandbox wraps every Bash tool
 # invocation in bubblewrap; if unprivileged user namespaces or bwrap itself are
 # unavailable the security model is silently degraded, so treat that as
-# unhealthy. The probe mirrors the flag set the wrapper will actually request:
-# inside a container (the default) it binds the container's /proc, because an
-# unprivileged bwrap cannot remount a fresh procfs; with
-# PI_SANDBOX_WEAKER_NESTED=off the wrapper asks for --proc instead, which only
-# works when the sandbox is not nested.
+# unhealthy. The probe mirrors the flag set the wrapper actually requests: this
+# image runs nested inside a container, where config/sandbox.json selects
+# enableWeakerNestedSandbox and the wrapper binds the container's existing
+# /proc instead of remounting a fresh one (which an unprivileged container
+# refuses).
 if ! command -v bwrap > /dev/null 2>&1; then
     echo "UNHEALTHY: bwrap not installed (pi-sandbox cannot enforce Bash policy)"
     EXIT_CODE=1
-else
-    if [ "${PI_SANDBOX_WEAKER_NESTED:-on}" = "off" ]; then
-        PROC_ARGS=(--proc /proc)
-    else
-        PROC_ARGS=(--bind /proc /proc)
-    fi
-    if ! bwrap --ro-bind / / --dev /dev --unshare-all --share-net \
-            --unshare-pid --unshare-user "${PROC_ARGS[@]}" /bin/true > /dev/null 2>&1; then
-        echo "UNHEALTHY: bwrap cannot create sandboxes (check user namespaces / seccomp / AppArmor; PI_SANDBOX_WEAKER_NESTED=${PI_SANDBOX_WEAKER_NESTED:-on})"
-        EXIT_CODE=1
-    fi
+elif ! bwrap --ro-bind / / --dev /dev --unshare-all --share-net \
+        --unshare-pid --unshare-user --bind /proc /proc /bin/true > /dev/null 2>&1; then
+    echo "UNHEALTHY: bwrap cannot create sandboxes (check user namespaces / seccomp / AppArmor)"
+    EXIT_CODE=1
 fi
 
 # Check pi-web session daemon - the socket must exist and answer HTTP requests.

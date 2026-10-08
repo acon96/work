@@ -65,10 +65,12 @@ RUN mkdir -p /app
 
 # -- config & scripts ---------------------------------------------------------
 # Security policy consumed by pi extensions. These files are treated as
-# trusted policy inputs; pi-sandbox additionally write-protects its own config
-# from sandboxed commands. Bind-mount them over (see docker-compose.yml) to
-# change policy without rebuilding the image.
-COPY config/pi-sandbox-config.json         /home/agent/.pi/agent/extensions/pi-sandbox/config.json
+# trusted policy inputs; pi-sandbox write-protects its own config from
+# sandboxed commands (see its denyWrite list). Bind-mount them over (see
+# docker-compose.yml) to change policy without rebuilding the image.
+# pi-sandbox (carderne/pi-sandbox) reads its global config from
+# ~/.pi/agent/sandbox.json.
+COPY config/sandbox.json                   /home/agent/.pi/agent/sandbox.json
 COPY config/pi-permission-system-config.json /home/agent/.pi/agent/extensions/pi-permission-system/config.json
 # pi-web-access policy: search restricted to the configured SearXNG endpoint,
 # SSRF guard with a narrow allow-range for the internal SearXNG container.
@@ -76,7 +78,7 @@ COPY config/web-search.json                /home/agent/.pi/agent/web-search.json
 # Pristine root-owned copies: the entrypoint always re-renders the runtime
 # configs from these at startup (idempotent env-var merges, and sandboxed
 # commands cannot rewrite the source of truth).
-COPY config/pi-sandbox-config.json         config/pi-permission-system-config.json config/web-search.json /etc/work/policies/
+COPY config/sandbox.json                   config/pi-permission-system-config.json config/web-search.json /etc/work/policies/
 COPY config/agent.gitconfig        /home/agent/.gitconfig
 COPY scripts/scheduler-run.sh      /usr/local/bin/scheduler-run
 COPY scripts/entrypoint.sh         /entrypoint.sh
@@ -84,14 +86,26 @@ COPY scripts/healthcheck.sh        /usr/local/bin/healthcheck
 RUN chmod +x /entrypoint.sh /usr/local/bin/scheduler-run /usr/local/bin/healthcheck
 
 # -- workspace -----------------------------------------------------------------
-RUN mkdir -p /workspace && chown agent:agent /workspace
+# /workspace  - the agent's persistent, writable project root (bind-mounted).
+# /scratch    - stable agent-writable temp space. At runtime this is overlaid by
+#               a memory-backed volume (tmpfs / emptyDir medium: Memory) so it
+#               never touches disk and resets with the container. The directory
+#               is world-writable with the sticky bit so an externally mounted
+#               volume keeps working regardless of its owning uid.
+RUN mkdir -p /workspace && chown agent:agent /workspace \
+ && mkdir -p /scratch && chmod 1777 /scratch
 
 # -- pi extensions (pinned npm packages) --------------------------------------
 # Copy package.json and install off-the-shelf extensions.
 # pi will auto-discover these via the "packages" array in .pi/settings.json.
 WORKDIR /app
 COPY package.json /app/package.json
-RUN npm install --omit=dev 2>&1
+# --legacy-peer-deps: pi-sandbox still declares peerOptional
+# @earendil-works/pi-coding-agent@^0.80.0 (stale metadata published with
+# 0.7.1) while this image pins the 1.x agent every other extension requires.
+# The package's own imports resolve fine against 1.0.4; only its peer range is
+# behind, so the conflict is metadata, not a real incompatibility.
+RUN npm install --omit=dev --legacy-peer-deps 2>&1
 # pi-web ships the relays Pi package inside its tarball and its session daemon
 # auto-installs it into the agent profile at startup (relays = remote/mobile
 # relay sessions). This deployment does not use relays: remove the shipped
@@ -99,21 +113,12 @@ RUN npm install --omit=dev 2>&1
 # the matching dismissal so the reconciliation skips it cleanly.
 RUN rm -rf /app/node_modules/@jmfederico/pi-web/dist/pi-packages/relays
 
-# -- pi-sandbox nested-container patch ----------------------------------------
-# pi-sandbox always asks Sandbox Runtime for a fresh procfs inside each sandbox
-# (--proc /proc).  An unprivileged container refuses that remount, so every
-# sandboxed Bash command dies with "bwrap: Can't mount proc on /newroot/proc:
-# Operation not permitted".  The patch flips Sandbox Runtime's documented
-# enableWeakerNestedSandbox mode (which substitutes --bind /proc /proc), gated
-# by PI_SANDBOX_WEAKER_NESTED.  pi-sandbox exposes no knob for this and its own
-# config parser rejects unknown keys, so the package source is patched.
-# The patch must re-apply on every pi-sandbox version bump: the build fails
-# loudly if the hunk no longer matches.
-COPY patches/ /tmp/work-patches/
-RUN patch -p1 --no-backup-if-mismatch -d /app/node_modules/@erichll/pi-sandbox \
-      < /tmp/work-patches/pi-sandbox-weaker-nested.patch \
- && rm -rf /tmp/work-patches
-ENV PI_SANDBOX_WEAKER_NESTED=on
+# Nested-container sandboxing needs no patch: pi-sandbox (carderne) exposes
+# Sandbox Runtime's documented enableWeakerNestedSandbox through its own config
+# (config/sandbox.json), which binds the container's /proc instead of asking
+# bwrap for a fresh procfs an unprivileged container would refuse. Sandboxed
+# Bash can therefore see this container's process table; the outer container is
+# the security boundary that matters.
 # Expose all npm-installed binaries (pi, pi-web-server, pi-web-sessiond, etc.)
 ENV PATH="/app/node_modules/.bin:${PATH}"
 
@@ -135,7 +140,7 @@ COPY skills/ /home/agent/.pi/agent/skills/
 # -- Compile custom pi-web plugins from TypeScript ------------------------
 # Install TypeScript as a build dependency (dev-only, not needed at runtime).
 RUN --mount=type=cache,target=/root/.npm \
-    npm install --no-save --omit=dev typescript 2>&1
+    npm install --no-save --omit=dev --legacy-peer-deps typescript 2>&1
 
 # Copy the build script and plugin sources, then compile.
 COPY scripts/build-plugins.sh /usr/local/bin/build-plugins

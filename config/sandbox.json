@@ -1,0 +1,50 @@
+{
+  "enabled": true,
+  "sandboxUserShell": true,
+  "permissionPromptTimeoutSeconds": 600,
+  "enableWeakerNestedSandbox": true,
+  "allowBrowserProcess": false,
+  "network": {
+    "strictAllowlist": true,
+    "allowedDomains": [
+      "registry.npmjs.org",
+      "pypi.org",
+      "files.pythonhosted.org",
+      "github.com",
+      "*.github.com",
+      "objects.githubusercontent.com",
+      "raw.githubusercontent.com",
+      "huggingface.co",
+      "*.huggingface.co",
+      "*.hf.co",
+      "arxiv.org",
+      "ntfy.sh"
+    ],
+    "deniedDomains": [],
+    "allowLocalBinding": false,
+    "allowAllUnixSockets": false,
+    "allowUnixSockets": [],
+    "sshProxy": false,
+    "allowUnauthenticatedSocksProxy": false,
+    "allowSSHAgentSocket": false
+  },
+  "filesystem": {
+    "denyRead": [
+      "/home/agent/.pi/agent/auth.json",
+      "/home/agent/.git-credentials",
+      "/home/agent/.ssh"
+    ],
+    "allowRead": ["/**"],
+    "allowWrite": [".", "/scratch"],
+    "denyWrite": [
+      ".pi/sandbox.json",
+      "/home/agent/.pi/agent/sandbox.json",
+      "/home/agent/.pi/agent/settings.json",
+      "/home/agent/.pi/agent/models.json",
+      "/home/agent/.pi/agent/web-search.json",
+      "/home/agent/.pi/agent/extensions",
+      "/app/node_modules"
+    ],
+    "denyMandatoryCwdFiles": false
+  }
+}

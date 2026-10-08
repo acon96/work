@@ -1,16 +1,18 @@
 # -----------------------------------------------------------------------------
 # Single-agent topology. Squid and the whole external-proxy apparatus are gone:
-# outbound policy is now enforced INSIDE the work container by pi-sandbox,
-# which wraps every Bash tool invocation in a bubblewrap sandbox with its own
-# network namespace. Domains listed in config/pi-sandbox-config.json pass
-# silently; anything else prompts the human in the session UI once per
-# connection (the model-backed pi-auto-review reviewer is deliberately not
-# enabled). pi-permission-system gates Pi's native file tools with human
-# prompts.
+# outbound policy is now enforced INSIDE the work container by pi-sandbox
+# (carderne/pi-sandbox), which wraps every Bash tool invocation in a bubblewrap
+# sandbox with its own network namespace whose only exit is a policy proxy.
+# Domains in config/sandbox.json pass silently; a domain that is not listed is
+# denied outright (pi-sandbox starts the runtime without a per-connection
+# callback). The human-facing domain prompt is a static scan of the command
+# text: a command naming an unlisted host prompts once before it runs, so
+# hosts reached indirectly (redirects, IP literals, config files) never prompt
+# and simply fail. pi-permission-system gates Pi's native file tools.
 #
-#   work        the agent. Non-root, no sudo, no CA machinery. Also runs the
-#               pi-sandbox brokers and the Pi process itself. Publishes the
-#               Pi Web UI on the host loopback.
+#   work        the agent. Non-root, no sudo, no CA machinery. Runs the Pi
+#               process and the pi-sandbox policy proxies. Publishes the Pi Web
+#               UI on the host loopback.
 #   searxng     metasearch; does its own outbound searching.
 #   llama-swap  optional local model serving (profile: llama-swap).
 #
@@ -46,6 +48,13 @@ services:
       - type: bind
         source: ${WORKSPACE_DIR:-./agent-workspace}
         target: /workspace
+      # Stable agent-writable temp space (pi-sandbox allowWrite entry /scratch).
+      # tmpfs: nothing written here reaches disk, and it is empty on every
+      # container start. Kubernetes equivalent: emptyDir { medium: Memory }.
+      - type: tmpfs
+        target: /scratch
+        tmpfs:
+          size: 1073741824
       # Pi global settings (all projects) - per pi.dev docs: ~/.pi/agent/settings.json
       - type: bind
         source: .pi/agent/settings.json
@@ -88,10 +97,6 @@ services:
       # IP must be allowed through the SSRF guard.  In Kubernetes the public
       # SearXNG host needs no range.
       SSRF_ALLOW_RANGES: ${SSRF_ALLOW_RANGES:-172.28.0.10/32}
-      # Procfs mode for pi-sandbox sandboxes (image default: on).  Keep "on"
-      # when running nested inside a container; "off" only on a host where
-      # bwrap may mount a fresh procfs.
-      PI_SANDBOX_WEAKER_NESTED: ${PI_SANDBOX_WEAKER_NESTED:-on}
       # Optional HTTPS git credentials written to /home/agent/.git-credentials at startup.
       GIT_CREDENTIAL_URLS: ${GIT_CREDENTIAL_URLS:-}
       GIT_CREDENTIAL_PROTOCOL: ${GIT_CREDENTIAL_PROTOCOL:-https}

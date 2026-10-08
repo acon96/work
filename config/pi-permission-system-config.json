@@ -3,10 +3,7 @@
     "*": "allow",
     "path": {
       "*": "allow",
-      ".env": "deny",
-      ".env.*": "deny",
-      "*.env": "deny",
-      ".env.example": "allow",
+      "~/.pi/agent/auth.json": "deny",
       "*.pem": "deny",
       "*.key": "deny",
       "*.p12": "deny",
@@ -14,15 +11,16 @@
     },
     "external_directory": {
       "*": "ask",
-      "/tmp/*": "allow"
+      "/tmp/*": "allow",
+      "/scratch/*": "allow"
     },
-    "external_directory_read": { 
-      "/workspace/*": "allow"
+    "external_directory_read": {
+      "*": "allow"
     },
     "path_write": {
       "~/.ssh/*": "deny",
       "~/.git-credentials": "deny",
-      "~/.pi/agent/extensions/pi-sandbox/config.json": "deny",
+      "~/.pi/agent/sandbox.json": "deny",
       "~/.pi/agent/extensions/pi-permission-system/config.json": "deny",
       "~/.pi/agent/web-search.json": "deny",
       "~/.pi/agent/settings.json": "deny",

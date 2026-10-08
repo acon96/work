@@ -70,12 +70,12 @@ configure_git_credentials
 # policy knobs are PROXY_ALLOWLIST and SSRF_ALLOW_RANGES below; anything else
 # means editing config/ in the repo and rebuilding the image.
 POLICY_SRC="/etc/work/policies"
-SANDBOX_CONFIG="$AGENT_HOME/.pi/agent/extensions/pi-sandbox/config.json"
+SANDBOX_CONFIG="$AGENT_HOME/.pi/agent/sandbox.json"
 PERMISSION_CONFIG="$AGENT_HOME/.pi/agent/extensions/pi-permission-system/config.json"
 WEB_SEARCH_CONFIG="$AGENT_HOME/.pi/agent/web-search.json"
 
 for pair in \
-    "pi-sandbox-config.json:$SANDBOX_CONFIG" \
+    "sandbox.json:$SANDBOX_CONFIG" \
     "pi-permission-system-config.json:$PERMISSION_CONFIG" \
     "web-search.json:$WEB_SEARCH_CONFIG"; do
     src="$POLICY_SRC/${pair%%:*}"

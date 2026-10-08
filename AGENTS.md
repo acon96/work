@@ -21,7 +21,6 @@ work/
 |   |-- scheduled/     Scheduler state and run history
 |   \-- web/           Pi Web state
 |-- config/            Runtime and service configuration
-|-- patches/           Build-time dependency patches
 |-- scripts/           Container and scheduler scripts
 |-- extensions/        Pi agent extensions
 |-- skills/            Pi agent skills
@@ -36,9 +35,9 @@ work/
 
 1. **There is only one runtime user: `agent` (uid 1001), and the agent container runs as it.** `USER agent` is set in the image and `user: "1001:1001"` in Compose. There is no sudo, no gosu, no root entrypoint, and no `CAP_*` on the agent container.
 2. **The Pi Web UI port is published on the host loopback only.** The `work` service maps `${PI_WEB_BIND_ADDRESS:-127.0.0.1}:${PI_WEB_PORT:-8504}:8504`. Never widen `PI_WEB_BIND_ADDRESS`: pi-web is not a permission boundary; pi-permission-system and pi-sandbox enforce policy.
-3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure.** The policy JSON files under `config/` ship baked into the image (runtime paths under `~/.pi/agent/`, pristine root-owned copies under `/etc/work/policies/`); there are deliberately NO policy file mounts in Compose or the Kubernetes Deployment. The entrypoint re-renders the runtime configs from the pristine copies at startup, and the only runtime policy knobs are env vars merged in at that point: `PROXY_ALLOWLIST` (comma-separated domains appended to `network.allowedDomains`) and `SSRF_ALLOW_RANGES` (comma-separated CIDRs appended to pi-web-access `ssrf.allowRanges`). Anything beyond those two knobs means editing `config/` and rebuilding the image. `network.allowedDomains` is the silent baseline; unmatched destinations prompt the human in the session UI once per connection. The model-backed reviewer (`pi-auto-review`) must stay UNLOADED: it is an npm dependency of pi-sandbox but must never appear in `packages` in settings.json -- with no broker registered, pi-sandbox falls through to interactive human approval, which is the whole point. `subagents.provider` must stay `off` and `hostIPC.mode` must stay `off`. Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
+3. **Network and Bash policy is enforced by pi-sandbox, not by infrastructure.** The policy JSON files under `config/` ship baked into the image (runtime paths under `~/.pi/agent/`, pristine root-owned copies under `/etc/work/policies/`); there are deliberately NO policy file mounts in Compose or the Kubernetes Deployment. The entrypoint re-renders the runtime configs from the pristine copies at startup, and the only runtime policy knobs are env vars merged in at that point: `PROXY_ALLOWLIST` (comma-separated domains appended to `network.allowedDomains`) and `SSRF_ALLOW_RANGES` (comma-separated CIDRs appended to pi-web-access `ssrf.allowRanges`). Anything beyond those two knobs means editing `config/` and rebuilding the image. `network.allowedDomains` is the silent baseline and the real policy: pi-sandbox starts its runtime with no per-connection approval callback, so an unmatched destination is denied, and the only prompt is a static scan of the command text for URLs it names (see "Adding an allowlisted domain"). Squid, the MITM CA, and the separate proxy container were removed deliberately in favor of per-Bash-command bubblewrap enforcement; do not reintroduce them half-way.
 4. **Tool/file policy is enforced by pi-permission-system.** `config/pi-permission-system-config.json` (installed at `~/.pi/agent/extensions/pi-permission-system/config.json`, read-only) configures human prompts only: no `authorizerChain`, so no model-backed reviewer ever runs. Keep `external_directory: ask` and the secret-file `deny` block.
-5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs a bubblewrap probe with the procfs mode the wrapper will actually request; if user namespaces, seccomp, or AppArmor on the node block it, the stack reports unhealthy rather than running unenforced. Requirements: usable unprivileged user namespaces (on AppArmor-enforcing nodes: an unconfined pod AppArmor profile or a bwrap profile, plus `kernel.apparmor_restrict_unprivileged_userns=0`) and a permissive-enough seccomp profile (`seccompProfile: Unconfined` on Kubernetes). No capabilities are granted and the agent stays uid 1001: the image patches pi-sandbox to run Sandbox Runtime in weaker nested-sandbox mode, which is what makes procfs work inside an unprivileged container (see `patches/`).
+5. **The sandbox substrate must be verified, not assumed.** The container healthcheck runs a bubblewrap probe with the same procfs binding the wrapper requests (`--bind /proc /proc`); if user namespaces, seccomp, or AppArmor on the node block it, the stack reports unhealthy rather than running unenforced. Requirements: usable unprivileged user namespaces (on AppArmor-enforcing nodes: an unconfined pod AppArmor profile or a bwrap profile, plus `kernel.apparmor_restrict_unprivileged_userns=0`) and a permissive-enough seccomp profile (`seccompProfile: Unconfined` on Kubernetes). No capabilities are granted and the agent stays uid 1001: `config/sandbox.json` sets `enableWeakerNestedSandbox`, which is what makes procfs work inside an unprivileged container.
 6. **Session data persists via bind mounts** at `/home/agent/.pi/agent/sessions` (from `.pi/agent/sessions`), `/home/agent/.pi/agent/settings.json` (from `.pi/agent/settings.json`), and `/home/agent/.pi/web` (from `.pi/web`). Never hardcode paths to non-persistent locations.
 
 ---
@@ -153,52 +152,56 @@ The `agent-net` subnet is pinned so the SearXNG address in `config/web-search.js
 
 - `bubblewrap`, `socat`, `ripgrep` installed in the image (see Dockerfile).
 - Unprivileged user namespaces usable inside the container: keep `seccomp:unconfined` (Kubernetes: `seccompProfile.type: Unconfined`), and on AppArmor-enforcing nodes set the pod to `appArmorProfile.type: Unconfined` (or install a bwrap profile) plus `kernel.apparmor_restrict_unprivileged_userns=0` on the node.
-- No capabilities, no root: the container keeps `cap_drop: ALL`, `no-new-privileges`, and uid 1001. bubblewrap 0.8 rejects every privileged route for a non-root caller (setuid removed upstream; it dies outright when a non-zero uid holds capabilities), so capabilities are not an option here -- see the header of `patches/pi-sandbox-weaker-nested.patch`.
-- Procfs inside the sandbox comes from that patch: pi-sandbox never sets Sandbox Runtime's `enableWeakerNestedSandbox`, and an unprivileged container refuses the fresh procfs remount (`bwrap: Can't mount proc on /newroot/proc: Operation not permitted`), so every sandboxed command would fail. The patch sets the flag from `PI_SANDBOX_WEAKER_NESTED` (default `on`; `off` restores the `--proc` remount for non-nested hosts). Weaker mode binds the container's `/proc` into each sandbox instead of mounting a fresh one: sandboxed Bash can see the container's process table, which is why the outer container boundary matters. The patch must re-apply on every pi-sandbox version bump; the Docker build fails loudly if the hunk no longer matches.
+- No capabilities, no root: the container keeps `cap_drop: ALL`, `no-new-privileges`, and uid 1001. bubblewrap 0.8 rejects every privileged route for a non-root caller (setuid removed upstream; it dies outright when a non-zero uid holds capabilities), so capabilities are not an option here.
+- Procfs inside the sandbox comes from `enableWeakerNestedSandbox: true` in `config/sandbox.json`: an unprivileged container refuses the fresh procfs remount (`bwrap: Can't mount proc on /newroot/proc: Operation not permitted`), so every sandboxed command would fail without it. Weaker mode binds the container's `/proc` into each sandbox instead of mounting a fresh one: sandboxed Bash can see the container's process table, which is why the outer container boundary matters.
 - The container healthcheck probes `bwrap` with the matching procfs mode, so a node that breaks sandboxing shows up as unhealthy rather than silently unenforced.
 
-### Patches applied at build time
+### Filesystem scope inside the sandbox
 
-`patches/*.patch` are applied to installed npm packages in the Dockerfile (`patch -p1 -d /app/node_modules/<pkg>`). They exist where upstream exposes no knob for something this deployment needs, and each one must carry a header explaining why it exists and how to avoid it.
+`config/sandbox.json` is the whole story, and its shape is deliberate:
 
-- `pi-sandbox-weaker-nested.patch` -- adds `enableWeakerNestedSandbox` to the Sandbox Runtime config pi-sandbox builds, gated by the `PI_SANDBOX_WEAKER_NESTED` env var.
+- `allowWrite: [".", "/scratch"]` -- `.` is expanded per session against that session's CWD, so writes are confined to the project the session is working in plus scratch. Do not widen this to `/workspace`: that would let one session write into another project's tree.
+- `allowRead: ["/**"]` with a short `denyRead` list (`~/.pi/agent/auth.json`, `~/.git-credentials`, `~/.ssh`). Reads are open on purpose: the agent researches inside the container. `denyRead` beats `allowRead`, and it is what protects the provider credentials from *sandboxed Bash*; the Pi process itself is not sandboxed, so those same paths are also denied in the pi-permission-system `path` map for the native file tools.
+- `denyWrite` entries must all already exist. Bubblewrap needs a real mount point for a denied path; for a missing one it creates an empty stub file in the parent directory (the `.pi/extensions/pi-sandbox` ghost in the old build). The fork cleans these up, but do not rely on that: deny paths that exist. `.pi/sandbox.json` is the one relative entry and is verified not to leave a stub.
+- `denyMandatoryCwdFiles: false` keeps pi-sandbox from masking `.gitconfig`, `.bashrc`, `.mcp.json` and friends in the working directory, which would show up as zero-length char devices in the user's tree.
+- `/scratch` is a memory-backed volume in both Compose (tmpfs) and Kubernetes (`emptyDir: { medium: Memory }`), and the image directory is `1777` so a foreign uid can still write. `$TMPDIR` is writable but per-command; anything that must survive to the next command belongs in `/scratch`.
 
-Maintenance rules:
+### Two extensions are named pi-sandbox
 
-- Bumping a patched package must re-apply the patch. The Docker build fails if the hunk no longer matches, so regenerate it rather than skipping the step: edit the file in a scratch install, then `diff -u --label a/<path> --label b/<path> orig patched > patches/<name>.patch`.
-- Check the upstream changelog when bumping: if the package grows a config key for the same behavior, delete the patch and configure it instead.
-- Never patch a package to loosen policy (allowlists, permission checks). Patches here only adapt the runtime to running nested inside a container.
+This image uses `pi-sandbox` (carderne/pi-sandbox, config at `~/.pi/agent/sandbox.json`, project override `<cwd>/.pi/sandbox.json`). It is a different package from `@erichll/pi-sandbox` (config at `~/.pi/agent/extensions/pi-sandbox/config.json`), which this repo used before: different config schema, different path, different prompt semantics, and no nested-container knob. Docs and issues for one do not describe the other; check `package.json` before trusting anything written about "pi-sandbox".
+
+- `npm install` needs `--legacy-peer-deps` (both installs in the Dockerfile): pi-sandbox publishes `peerOptional @earendil-works/pi-coding-agent@^0.80.0`, which conflicts with the 1.x agent this image pins. The conflict is stale published metadata -- the package's imports resolve fine against 1.x -- so keep the flag until upstream widens the range rather than downgrading the agent.
+
+### Never patch node modules
+
+There is no `patches/` directory and there must not be one. The former `pi-sandbox-weaker-nested.patch` existed only because the package then in use exposed no knob for nested-container procfs; the package used now exposes `enableWeakerNestedSandbox` in its own config, and the build has no patch step. If a future dependency seems to need a patch, look for the config option first (read its schema, not just its README) and prefer switching packages over patching: a patched `node_modules` tree is invisible to `npm install`, silently diverges from the lockfile, and re-breaks on every version bump.
 
 ### Adding an allowlisted domain
 
 Two ways:
 
-1. **Per-connection (default flow):** Bash reaching a domain that is not in `network.allowedDomains` prompts the human in the session UI ("Allow this exact operation once" / "Deny"). The approval covers that one hostname:port connection; a new connection prompts again. No file edit and no reload needed. Sessions without UI (scheduler tasks) are denied.
-2. **Permanent baseline:** set `PROXY_ALLOWLIST` (comma-separated domains) in the deployment environment. The entrypoint merges those domains into the baked `network.allowedDomains` at startup (see Core invariant 3); apply by restarting the container/pod. Entries are exact domains, strict-subdomain wildcards (`*.example.com` -- note this does NOT match the apex domain), and optional `:port` restrictions. For durable base changes, edit `config/pi-sandbox-config.json` and rebuild the image.
+1. **Command-text prompt (interactive only):** before running a Bash command, pi-sandbox scans its text for `http(s)://host` URLs and prompts the human once for any host outside `network.allowedDomains` ("always allow" appends the domain to `~/.pi/agent/sandbox.json`). This is a static scan, not a connection-level gate: a host reached through a redirect, a bare IP literal, or a config file is never detected, and the proxy then drops the connection with no prompt. Sessions without UI (scheduler tasks) cannot prompt, so nothing is approved there.
+2. **Permanent baseline:** set `PROXY_ALLOWLIST` (comma-separated domains) in the deployment environment. The entrypoint merges those domains into the baked `network.allowedDomains` at startup (see Core invariant 3); apply by restarting the container/pod. Entries are exact domains and strict-subdomain wildcards (`*.example.com` -- this does NOT match the apex domain). For durable base changes, edit `config/sandbox.json` and rebuild the image.
 
-The broker only evaluates **public** hostnames (names with a dot, resolving outside private/loopback ranges). Sandbox-ed Bash therefore can never reach service names like `searxng` or `llama-swap` -- those must go through Pi's own tools (web_search, model providers), which run outside the Bash jail. If a Bash command genuinely needs an internal service, that is a design decision to make explicitly, not an allowlist edit.
+Because the prompt cannot be relied on for correctness, treat `network.allowedDomains` as the real policy: anything a scheduled or long-running task needs must be in the baseline. The proxy resolves hostnames for the sandbox and never resolves internal service names on the deployment network in a useful way for Bash, so `searxng` and `llama-swap` are reached through Pi's own tools (web_search, model providers), which run outside the Bash jail. If a Bash command genuinely needs an internal service, that is a design decision to make explicitly, not an allowlist edit.
 
 ### Changing policy (operator only)
 
-Policy is baked into the image under `/home/agent/.pi/agent/` and `/home/agent/.pi/agent/extensions/` -- no policy file mounts. The only operator runtime knobs are the `PROXY_ALLOWLIST` and `SSRF_ALLOW_RANGES` env vars (see Core invariant 3). There is deliberately no agent-side control path (no tool, no slash command, no script in the agent image); do not add one back. Keep `subagents.provider: "off"` and `hostIPC.mode: "off"`.
+Policy is baked into the image under `/home/agent/.pi/agent/` (`sandbox.json`, `web-search.json`) and `/home/agent/.pi/agent/extensions/` (pi-permission-system) -- no policy file mounts. The only operator runtime knobs are the `PROXY_ALLOWLIST` and `SSRF_ALLOW_RANGES` env vars (see Core invariant 3). There is deliberately no agent-side control path (no tool, no slash command, no script in the agent image); do not add one back.
 
-The network review chain is: static deny -> static allow -> human prompt. The model-backed reviewer (`pi-auto-review`) is intentionally never enabled: do not add it to `packages` in settings.json or to `authorizerChain` in the pi-permission-system config. With no reviewer broker registered, pi-sandbox's `approval.ts` falls through to its built-in interactive UI prompt. Setting `network.strictAllowlist: true` would skip the human prompt and deny everything unmatched -- use only for locked-down one-shot runs.
+The network decision chain for a sandboxed command is: command-text scan (prompt only for URLs the command actually names) -> static deny -> static allow -> deny. `config/sandbox.json` already sets `strictAllowlist: true`; it makes no difference here, because pi-sandbox starts the runtime without a per-connection approval callback and denies anything unmatched on its own.
+
+Writes follow the same "no unsatisfiable prompt" rule: pi-sandbox's write-block prompt only reacts to `Operation not permitted`, but bubblewrap mounted the rest of the filesystem read-only, so an outside write fails with `Read-only file system` and no prompt is offered. Do not add writable paths on the assumption that a human gets asked first -- they will not be.
 
 ### Containment checks
 
-Run these after any topology, image, or policy change. Note these checks are run via `docker compose exec`, i.e. OUTSIDE a Pi Bash tool call, so they test the container, not the pi-sandbox broker. To test pi-sandbox itself, run the same probes from inside a Pi session's Bash tool.
+Run these after any topology, image, or policy change. Container-level checks run via `docker compose exec`, i.e. OUTSIDE a Pi Bash tool call, so they do not exercise the bubblewrap wrapper; the sandbox probes must be run from inside a Pi session's Bash tool.
+
+Container-level checks (run from outside, they test the container, not a sandbox):
 
 ```bash
 # expected to succeed from the Pi process (egress exists for the container)
 docker compose exec work curl -sS -o /dev/null -w '%{http_code}\n' https://api.anthropic.com/
-
-# inside a Pi Bash tool: allowlisted domain succeeds; anything else raises a
-# human approval prompt in the session UI ("Allow this exact operation once")
-#   curl -sS -o /dev/null -w '%{http_code}' https://api.anthropic.com/   -> 200/4xx
-#   curl -sS -o /dev/null -w '%{http_code}' https://example.com          -> denied
-
-# expected: writes outside the workspace from a Bash tool fail
-#   touch /etc/test -> denied; touch /home/agent/test -> denied
 
 # expected: uid 1001, no sudo, no capabilities (weaker nested sandbox mode is
 # what makes procfs work without them)
@@ -206,6 +209,23 @@ docker compose exec work sh -c 'id -u; command -v sudo || echo "no sudo"; grep -
 
 # expected: healthcheck goes UNHEALTHY if bwrap cannot sandbox
 docker compose exec work healthcheck
+```
+
+Sandbox checks -- these must run **inside a Pi session's Bash tool**, since that is the only place the bubblewrap wrapper applies. Expected results with the shipped `config/sandbox.json`:
+
+```
+touch ./ok                      -> ok (the session CWD is writable)
+touch /scratch/ok               -> ok  (stable scratch; verify with ls -l /scratch)
+touch /scratch/ok then read it  -> ok  in a LATER command (scratch persists per container)
+touch /workspace/other/x        -> denied (Read-only file system) when not in the CWD
+touch /tmp/x                    -> denied; echo x > "$TMPDIR/x" -> ok but command-local
+touch /etc/x                    -> denied
+cat ~/.pi/agent/auth.json       -> denied (masked by denyRead)
+cat /etc/passwd                 -> ok  (reads are open for research)
+curl -sS -o /dev/null -w '%{http_code}' https://pypi.org/simple/ -> 200
+curl -sS -o /dev/null -w '%{http_code}' https://example.com/     -> failure (000), no prompt
+echo x >> ~/.pi/agent/sandbox.json -> denied (policy is read-only inside the sandbox)
+mkdir -p .pi && echo '{}' > .pi/sandbox.json -> denied (no self-relaxing via project config)
 ```
 
 Passing these in Compose demonstrates the data path. It is **not** evidence that Kubernetes NetworkPolicy works; the cluster needs the same checks re-run.
