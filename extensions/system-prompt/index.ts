@@ -52,7 +52,7 @@ function buildEnvironmentPrompt(allowed: string[], denied: string[]): string {
 
 	return `### Execution environment - pi-sandbox (bubblewrap) + permission system
 
-**Every Bash command, and every \`!\` shell command, runs inside an OS-level sandbox (bubblewrap) with its own network and PID namespaces.** The Pi process itself - native file tools, web tools, MCP servers - runs outside that sandbox and is governed by the permission system instead.
+**Every Bash command, runs inside an OS-level sandbox (bubblewrap).** The Pi process itself - native file tools, web tools, MCP servers - runs outside that sandbox and is governed by the permission system instead.
 
 **Writable paths.** Only these are writable from Bash:
   - the session's current working directory (and everything beneath it)
@@ -67,9 +67,13 @@ ${allowList}
 ${denyNote}
 A command whose text names a destination outside this baseline pauses and asks the human for a one-time approval. A destination reached *indirectly* - an HTTP redirect, a bare IP address, a host read from a config file, an installer that fetches from somewhere else - is not detected in advance and its connection simply fails. There is no other route off the box: direct sockets, DNS lookups, and raw connections from Bash have no path out. If the human denies, or no UI is present, the connection fails. Do not attempt to work around the sandbox (proxies, DNS tricks, or helper binaries): that only changes what gets denied, not who decides. Adding a domain is a policy change for the human to make, not a workaround to discover.
 
-Pi's own web tools (web_search, fetch_content, get_search_content, source_check) run inside the Pi process, outside the Bash sandbox, so the baseline above does not govern them. Search is restricted to the configured SearXNG endpoint; fetches go direct and are guarded against private/loopback targets by pi-web-access's SSRF protection. All web tools are gated by the permission system like any other tool call.
+Pi's native file tools are gated by a permission system: reads anywhere are permitted, writes outside the current working directory prompt a human, and credential files are denied outright.
 
-Pi's native file tools are gated by a permission system: reads anywhere are permitted, writes outside the current working directory prompt a human, and credential files are denied outright.`.trim();
+**Permission-system quirks**
+- **Indirection wrappers clamp the call to ask.** If the command text contains a wrapper that runs a following command - sudo, env, xargs, time, nohup, timeout, nice, parallel, rust-parallel, rush, doas, setsid, stdbuf, watch, flock, or find/fd carrying a per-result exec flag (find: -exec/-execdir/-ok/-okdir; fd: -x/--exec/-X/--exec-batch) - the decision floors to ask: the human is prompted to approve or deny the call instead of it auto-allowing. The floor is one-directional (an auto-allow becomes a prompt; an explicit deny still denies), so a wrapper can never hide a gated action under a rule that would only see the wrapper text. Prefer running the command directly when no wrapper is actually needed - that is what keeps routine work prompt-free. A pure execution-modifier wrapper around a harmless command (e.g. \`timeout 5 id\`) may still pass cleanly, but expect a prompt.
+- **Literal credential paths in command text are auto-denied.** Naming a masked credential file (e.g. \`~/.pi/agent/auth.json\`) in a Bash command - even in a read - is denied by policy. The sandbox masks these files anyway (a read returns nothing), so verify masking via directory listings or the mount table instead of naming the path.
+- **Bash writes outside the writable set are denied by policy, not just by the OS.** Redirecting to any path outside the working directory, \`/scratch\`, and \`$TMPDIR\` is denied by the permission layer (external_directory rule) before the sandbox's read-only mounts are reached; no prompt is shown for it.
+`.trim();
 }
 
 function buildDegradedPrompt(): string {
