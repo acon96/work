@@ -119,6 +119,8 @@ class SchedulerHistoryView extends HTMLElement {
   private _stdout?: string;
   private _stderr?: string;
   private _logError?: string;
+  private _stdoutOpen = true;
+  private _stderrOpen = false;
 
   set files(value: WorkspaceFiles) {
     this._files = value;
@@ -185,20 +187,39 @@ class SchedulerHistoryView extends HTMLElement {
       ? `<section class="detail"><h3>${escapeHtml(selected.task)} <small>${escapeHtml(selected.status)}</small></h3>
       <p>Run: <code>${escapeHtml(selected.runId)}</code><br>Duration: ${escapeHtml(formatDuration(selected.durationMs))}${selected.classification ? `<br>Classification: ${escapeHtml(selected.classification)}` : ""}</p>
       ${this._logError ? `<p class="error">${escapeHtml(this._logError)}</p>` : ""}
-      <h4>stderr</h4><pre>${escapeHtml(this._stderr ?? selected.stderrTail ?? "Loading…")}</pre>
-      <h4>stdout</h4><pre>${escapeHtml(this._stdout ?? "Loading…")}</pre>
+      <details class="log" data-log="stdout"${this._stdoutOpen ? " open" : ""}><summary>stdout</summary><pre>${escapeHtml(this._stdout ?? "Loading…")}</pre></details>
+      <details class="log" data-log="stderr"${this._stderrOpen ? " open" : ""}><summary>stderr</summary><pre>${escapeHtml(this._stderr ?? selected.stderrTail ?? "Loading…")}</pre></details>
     </section>`
-      : "";
+      : `<p class="muted placeholder">Select a run to see its stdout and stderr.</p>`;
 
+    // Preserve scroll positions: the whole panel is re-rendered on every update.
+    const runsScrollTop = this.querySelector<HTMLElement>("[data-scroll=runs]")?.scrollTop ?? 0;
+
+    // The panel renders into light DOM, so `:host` never matches. Every selector
+    // is scoped by the custom element tag to keep rules off the host page.
     this.innerHTML = `<style>
-      :host { display:block; padding: 12px; color: var(--text, inherit); } .toolbar { display:flex; justify-content:space-between; gap:8px; align-items:center; }
-      button { font:inherit; cursor:pointer; } .run { width:100%; text-align:left; display:grid; grid-template-columns:1fr auto; gap:3px 12px; padding:9px; border:1px solid color-mix(in srgb, currentColor 18%, transparent); background:transparent; color:inherit; border-radius:6px; margin:6px 0; }
-      .run small { grid-column:1 / -1; opacity:.7; } .run.failed span, .error { color:#e05252; } .run.succeeded span { color:#35a96b; } .detail { margin-top:14px; } pre { max-height:280px; overflow:auto; white-space:pre-wrap; background:color-mix(in srgb, currentColor 7%, transparent); padding:10px; border-radius:6px; } code { word-break:break-all; }
+      scheduler-history-view { display:flex; flex-direction:column; flex:1 1 auto; min-height:0; height:100%; box-sizing:border-box; overflow:hidden; padding:12px; gap:8px; color: var(--text, inherit); }
+      scheduler-history-view .toolbar { flex:0 0 auto; display:flex; justify-content:space-between; gap:8px; align-items:center; }
+      scheduler-history-view button { font:inherit; cursor:pointer; }
+      scheduler-history-view .notice { flex:0 0 auto; margin:0; }
+      scheduler-history-view .runs { flex:1 1 45%; min-height:3rem; overflow-y:auto; overscroll-behavior:contain; }
+      scheduler-history-view .run { width:100%; text-align:left; display:grid; grid-template-columns:1fr auto; gap:3px 12px; padding:9px; border:1px solid color-mix(in srgb, currentColor 18%, transparent); background:transparent; color:inherit; border-radius:6px; margin:0 0 6px; }
+      scheduler-history-view .run small { grid-column:1 / -1; opacity:.7; }
+      scheduler-history-view .run.failed span, scheduler-history-view .error { color:#e05252; }
+      scheduler-history-view .run.succeeded span { color:#35a96b; }
+      scheduler-history-view .muted { opacity:.7; }
+      scheduler-history-view .detail { flex:0 1 auto; min-height:0; overflow-y:auto; overscroll-behavior:contain; display:flex; flex-direction:column; gap:6px; margin-top:4px; padding-top:10px; border-top:1px solid color-mix(in srgb, currentColor 18%, transparent); }
+      scheduler-history-view .detail h3, scheduler-history-view .detail p { margin:0; }
+      scheduler-history-view .log { flex:0 0 auto; }
+      scheduler-history-view .log summary { cursor:pointer; font-weight:600; }
+      scheduler-history-view .log pre { max-height:30vh; overflow:auto; white-space:pre-wrap; background:color-mix(in srgb, currentColor 7%, transparent); padding:10px; border-radius:6px; margin:6px 0 0; }
+      scheduler-history-view .placeholder { margin:auto 0 0; }
+      scheduler-history-view code { word-break:break-all; }
     </style><section class="toolbar"><strong>Scheduled runs</strong><button id="refresh">Refresh</button></section>
-    ${loading ? "<p>Loading scheduler history…</p>" : ""}
-    ${error ? `<p class="error">${escapeHtml(error)}</p><p class="muted">No scheduler history exists yet. Run a scheduled task first.</p>` : ""}
-    ${!loading && !error && runs.length === 0 ? "<p class=\"muted\">No scheduled executions yet.</p>" : ""}
-    <section>${rows}</section>${detail}`;
+    ${loading ? "<p class=\"notice\">Loading scheduler history…</p>" : ""}
+    ${error ? `<p class="notice error">${escapeHtml(error)}</p><p class="notice muted">No scheduler history exists yet. Run a scheduled task first.</p>` : ""}
+    ${!loading && !error && runs.length === 0 ? "<p class=\"notice muted\">No scheduled executions yet.</p>" : ""}
+    <section class="runs" data-scroll="runs">${rows}</section>${detail}`;
 
     // Re-attach event listeners
     this.querySelector("#refresh")?.addEventListener("click", () => this.load(true));
@@ -208,6 +229,15 @@ class SchedulerHistoryView extends HTMLElement {
         if (run) void this.showRun(run);
       }),
     );
+    this.querySelectorAll<HTMLDetailsElement>("details.log").forEach((details) =>
+      details.addEventListener("toggle", () => {
+        if (details.dataset.log === "stdout") this._stdoutOpen = details.open;
+        else this._stderrOpen = details.open;
+      }),
+    );
+
+    const runsList = this.querySelector<HTMLElement>("[data-scroll=runs]");
+    if (runsList) runsList.scrollTop = runsScrollTop;
   }
 }
 
