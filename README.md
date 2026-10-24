@@ -58,6 +58,8 @@ Trust model (changed by the Squid removal): network enforcement moved from "infr
 
 One image is built: the agent (`work-sandbox`). pi-sandbox and its native helpers (bubblewrap, socat, ripgrep) are baked in.
 
+`package.json` overrides `@earendil-works/pi-codemode` to `1.0.4` for compatibility with Pi Coding Agent `1.0.4`. The agent's `^1.0.4` dependency range otherwise permits newer codemode releases that removed exports it requires. Re-evaluate this override when upgrading the agent. Dependency changes require rebuilding the image and recreating the container; restarting the existing container does not reinstall packages.
+
 ```bash
 docker compose build
 ```
