@@ -279,7 +279,6 @@ Default git configuration for the `agent` user.  Copied into the container at `/
 | `pi-sandbox`                       | `0.7.1`        | bubblewrap sandboxing of Bash: network + filesystem policy, nested-container mode (pi 1.x) |
 | `@gotgenes/pi-permission-system` | `39.1.0`       | allow/ask/deny gates on tools and paths, human prompts only (pi 1.x) |
 | `pi-web-access`                  | `0.36.0`       | `web_search`, `fetch_content`, `get_search_content`, `source_check`; SearXNG-first, built-in SSRF guard (pi 1.x) |
-| `pi-lens`                        | `3.8.71`       | Code lens / language server integration. **Not pi 1.x-ready**: latest release (4.3.0) still peers on pi-tui 0.84/0.85; loads an old bundled pi-tui. Drop or watch upstream |
 
 ### Commands
 
