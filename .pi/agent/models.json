@@ -9,6 +9,7 @@
       "maxTokens": "meta.llamaswap.max_tokens",
       "reasoning": "meta.llamaswap.thinking",
       "reasoningLevels": "meta.llamaswap.thinking_levels",
+      "image": "meta.llamaswap.image",
       "cost": {
         "input": "meta.llamaswap.cost_input",
         "output": "meta.llamaswap.cost_output",

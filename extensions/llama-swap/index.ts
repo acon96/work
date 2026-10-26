@@ -36,6 +36,7 @@ interface FieldMapping {
   reasoning?:     string;
   reasoningLevels?: string;
   input?:         string;
+  image?:         string;
   cost?:          CostMapping;
 }
 
@@ -340,11 +341,17 @@ async function loadConfig(): Promise<LlamaSwapConfig> {
   return {};
 }
 
-function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
+export function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
   const rawInput = dig(raw, fm.input);
-  const input: Array<"text" | "image"> = Array.isArray(rawInput)
+  const rawImage = dig(raw, fm.image);
+  const applyImageOverride = (input: Array<"text" | "image">): Array<"text" | "image"> => {
+    if (rawImage === true && !input.includes("image")) return [...input, "image"];
+    if (rawImage === false) return input.filter((type) => type !== "image");
+    return input;
+  };
+  const input = applyImageOverride(Array.isArray(rawInput)
     ? rawInput.filter((v: string) => v === "text" || v === "image")
-    : ["text"];
+    : ["text"]);
 
   const isPeer = dig(raw, "meta.llamaswap.peerID") !== undefined;
   const modelId = raw.id as string;
@@ -361,7 +368,7 @@ function mapModel(raw: any, fm: FieldMapping): ProviderModelConfig {
         id:               modelId,
         name:             foundModel.name,
         reasoning:        foundModel.reasoning,
-        input:            foundModel?.input,
+        input:            applyImageOverride(foundModel.input),
         contextWindow:    foundModel?.contextWindow,
         maxTokens:        foundModel?.maxTokens,
         cost:             foundModel?.cost,
