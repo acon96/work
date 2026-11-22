@@ -1,0 +1,839 @@
+diff --git a/.changeset/calm-terminal-badge-polling.md b/.changeset/calm-terminal-badge-polling.md
+new file mode 100644
+index 00000000..ece91128
+--- /dev/null
++++ b/.changeset/calm-terminal-badge-polling.md
+@@ -0,0 +1,5 @@
++---
++"@jmfederico/pi-web": patch
++---
++
++Refresh the Terminal workspace badge every ten seconds instead of every second. The badge count can now be up to ten seconds stale, which cuts background requests to the session daemon by ten times; an open Terminal panel is unaffected because it stays live over its own connection.
+diff --git a/.changeset/quiet-browser-resume-refresh.md b/.changeset/quiet-browser-resume-refresh.md
+new file mode 100644
+index 00000000..ffb82ecf
+--- /dev/null
++++ b/.changeset/quiet-browser-resume-refresh.md
+@@ -0,0 +1,5 @@
++---
++"@jmfederico/pi-web": patch
++---
++
++Stop the burst of background requests PI WEB used to send every time the browser tab regained focus. Returning to a tab can raise several resume signals at once, and each one started a full refresh that opened a fresh connection per request; bursts are now collapsed into a single refresh that runs a few requests at a time. Transient network failures on those reads also retry once after a spread-out delay instead of failing loudly, which removes the "NetworkError when attempting to fetch resource" and "Plugin backend request unavailable" errors seen mainly in Firefox.
+diff --git a/pi-web-plugins/terminal/TerminalBrowserRuntime.test.ts b/pi-web-plugins/terminal/TerminalBrowserRuntime.test.ts
+index 7b15f77f..b3e994b0 100644
+--- a/pi-web-plugins/terminal/TerminalBrowserRuntime.test.ts
++++ b/pi-web-plugins/terminal/TerminalBrowserRuntime.test.ts
+@@ -98,7 +98,7 @@ describe("Terminal browser runtime", () => {
+   });
+ 
+   it("owns active-count refresh and badge state for each machine workspace", async () => {
+-    let now = 1_000;
++    let now = 10_000;
+     const request = vi.fn<NonNullable<PluginPeer["request"]>>((operation: string): Promise<JsonValue> => Promise.resolve(operation === "terminal.list" ? [
+       { id: "active", cwd: "/repo", name: "Shell", createdAt: "now", exited: false },
+       { id: "exited", cwd: "/repo", name: "Build", createdAt: "now", exited: true, exitCode: 0 },
+@@ -114,7 +114,7 @@ describe("Terminal browser runtime", () => {
+     expect(request.mock.calls[0]?.slice(0, 2)).toEqual(["terminal.list", null]);
+     expect(request.mock.calls[0]?.[2]?.signal).toBeInstanceOf(AbortSignal);
+ 
+-    now += 999;
++    now += 9_999;
+     expect(runtime.activeTerminalBadge(context)).toBe(1);
+     expect(request).toHaveBeenCalledOnce();
+     now += 1;
+@@ -123,7 +123,7 @@ describe("Terminal browser runtime", () => {
+   });
+ 
+   it("backs off badge refresh failures instead of retrying on every render", async () => {
+-    let now = 1_000;
++    let now = 10_000;
+     const request = vi.fn(() => Promise.reject(new Error("offline")));
+     const context = workspaceContext("remote-1", request);
+     const runtime = new TerminalBrowserRuntime(new InMemoryTerminalSelectionMemory(), () => now);
+@@ -171,12 +171,12 @@ describe("Terminal browser runtime", () => {
+     await runtime.refresh(context);
+     requestRender.mockClear();
+ 
+-    await vi.advanceTimersByTimeAsync(3_000);
++    await vi.advanceTimersByTimeAsync(30_000);
+     expect(request).toHaveBeenCalledTimes(4);
+     expect(requestRender).not.toHaveBeenCalled();
+ 
+     request.mockRejectedValue(new Error("offline"));
+-    await vi.advanceTimersByTimeAsync(1_000);
++    await vi.advanceTimersByTimeAsync(10_000);
+     expect(runtime.activeTerminalBadge(context)).toBe("!");
+     expect(requestRender).toHaveBeenCalledTimes(1);
+     await vi.advanceTimersByTimeAsync(5_000);
+@@ -199,7 +199,7 @@ describe("Terminal browser runtime", () => {
+     visibility.hidden = true;
+     runtime.activeTerminalBadge(context);
+     visibility.hidden = false;
+-    await vi.advanceTimersByTimeAsync(4_999);
++    await vi.advanceTimersByTimeAsync(9_999);
+     expect(request).toHaveBeenCalledOnce();
+     await vi.advanceTimersByTimeAsync(1);
+     expect(request).toHaveBeenCalledTimes(2);
+@@ -226,11 +226,11 @@ describe("Terminal browser runtime", () => {
+     runtime.activeTerminalBadge(workspaceContext("remote", nextRequest));
+     if (outcome === "success") complete([]);
+     else fail(new Error("offline"));
+-    await vi.advanceTimersByTimeAsync(3_000);
++    await vi.advanceTimersByTimeAsync(30_000);
+     expect(oldRequest).toHaveBeenCalledOnce();
+     expect(nextRequest).toHaveBeenCalledTimes(4);
+     runtime.dispose();
+-    await vi.advanceTimersByTimeAsync(3_000);
++    await vi.advanceTimersByTimeAsync(30_000);
+     expect(nextRequest).toHaveBeenCalledTimes(4);
+     expect(vi.getTimerCount()).toBe(0);
+   });
+@@ -279,10 +279,10 @@ describe("Terminal browser runtime", () => {
+     runtime.activeTerminalBadge(context);
+     await runtime.refresh(context);
+     visibility.hidden = true;
+-    await vi.advanceTimersByTimeAsync(3_000);
++    await vi.advanceTimersByTimeAsync(30_000);
+     expect(request).toHaveBeenCalledOnce();
+     visibility.hidden = false;
+-    await vi.advanceTimersByTimeAsync(1_000);
++    await vi.advanceTimersByTimeAsync(10_000);
+     expect(request).toHaveBeenCalledTimes(2);
+     location.href = "https://example.test/?workspace=second";
+     await vi.advanceTimersByTimeAsync(10_000);
+diff --git a/pi-web-plugins/terminal/TerminalBrowserRuntime.ts b/pi-web-plugins/terminal/TerminalBrowserRuntime.ts
+index 5f721725..6a17a9bc 100644
+--- a/pi-web-plugins/terminal/TerminalBrowserRuntime.ts
++++ b/pi-web-plugins/terminal/TerminalBrowserRuntime.ts
+@@ -4,7 +4,9 @@ import { SessionStorageTerminalSelectionMemory, type TerminalSelectionMemory } f
+ import { TerminalSelectionController, terminalContextScope, selectionMemoryScope } from "./TerminalSelectionController";
+ import { TerminalPeerClient, type TerminalInfo } from "./terminalProtocol";
+ 
+-const ACTIVE_TERMINAL_REFRESH_MS = 1_000;
++// The badge is the only consumer of this read, and the terminal panel itself stays live over its
++// channel, so a count up to this old is acceptable; polling faster only adds background requests.
++const ACTIVE_TERMINAL_REFRESH_MS = 10_000;
+ const ACTIVE_TERMINAL_FAILURE_RETRY_MS = 5_000;
+ type TimerId = ReturnType<typeof globalThis.setTimeout>;
+ type SetTimer = (handler: () => void, timeout: number) => TimerId;
+diff --git a/src/client/src/appShell/browserResumeController.test.ts b/src/client/src/appShell/browserResumeController.test.ts
+index 8faa9e7f..626716e5 100644
+--- a/src/client/src/appShell/browserResumeController.test.ts
++++ b/src/client/src/appShell/browserResumeController.test.ts
+@@ -1,6 +1,18 @@
+-import { describe, expect, it, vi } from "vitest";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { BrowserResumeController } from "./browserResumeController";
+ 
++/** Mirrors the controller's resume quiet period. */
++const RESUME_QUIET_PERIOD_MS = 1_000;
++
++beforeEach(() => {
++  vi.useFakeTimers();
++});
++
++afterEach(() => {
++  vi.clearAllTimers();
++  vi.useRealTimers();
++});
++
+ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+   let resolveDeferred: ((value: T) => void) | undefined;
+   const promise = new Promise<T>((resolve) => { resolveDeferred = resolve; });
+@@ -40,7 +52,7 @@ describe("BrowserResumeController", () => {
+     controller.connect();
+     windowTarget.dispatchEvent(new Event("focus"));
+     frames.runNext();
+-    await Promise.resolve();
++    await vi.advanceTimersByTimeAsync(RESUME_QUIET_PERIOD_MS);
+     expect(refresh).toHaveBeenLastCalledWith(false);
+     visible = false;
+     documentTarget.dispatchEvent(new Event("visibilitychange"));
+@@ -48,13 +60,11 @@ describe("BrowserResumeController", () => {
+     windowTarget.dispatchEvent(new Event("focus"));
+     documentTarget.dispatchEvent(new Event("visibilitychange"));
+     frames.runNext();
+-    await Promise.resolve();
+-    await Promise.resolve();
++    await vi.advanceTimersByTimeAsync(RESUME_QUIET_PERIOD_MS);
+     expect(refresh).toHaveBeenLastCalledWith(true);
+     windowTarget.dispatchEvent(new Event("online"));
+     frames.runNext();
+-    await Promise.resolve();
+-    await Promise.resolve();
++    await vi.advanceTimersByTimeAsync(RESUME_QUIET_PERIOD_MS);
+     expect(refresh).toHaveBeenCalledTimes(3);
+     expect(refresh).toHaveBeenLastCalledWith(true);
+     controller.disconnect();
+@@ -65,7 +75,6 @@ describe("BrowserResumeController", () => {
+     const documentTarget = new EventTarget();
+     const frames = frameHarness();
+     const refreshGate = deferred<undefined>();
+-    const refreshStarted = deferred<undefined>();
+     const refreshCompleted = deferred<undefined>();
+     const onResumeSignal = vi.fn();
+     let refreshCalls = 0;
+@@ -73,7 +82,6 @@ describe("BrowserResumeController", () => {
+       onResumeSignal,
+       refreshAfterResume: async () => {
+         refreshCalls += 1;
+-        refreshStarted.resolve(undefined);
+         await refreshGate.promise;
+         refreshCompleted.resolve(undefined);
+       },
+@@ -97,7 +105,7 @@ describe("BrowserResumeController", () => {
+     expect(refreshCalls).toBe(0);
+ 
+     frames.runNext();
+-    await refreshStarted.promise;
++    await vi.advanceTimersByTimeAsync(RESUME_QUIET_PERIOD_MS);
+     expect(refreshCalls).toBe(1);
+ 
+     expect(frames.pendingCount()).toBe(0);
+@@ -106,6 +114,40 @@ describe("BrowserResumeController", () => {
+     controller.disconnect();
+   });
+ 
++  it("restarts the quiet period while resume signals keep arriving", async () => {
++    const windowTarget = new EventTarget();
++    const documentTarget = new EventTarget();
++    const frames = frameHarness();
++    const refreshAfterResume = vi.fn();
++    const controller = new BrowserResumeController({
++      onResumeSignal: () => undefined,
++      refreshAfterResume,
++      onRefreshError: (error) => { throw error; },
++    }, {
++      windowTarget,
++      documentTarget,
++      isDocumentVisible: () => true,
++      scheduleFrame: frames.scheduleFrame,
++    });
++    controller.connect();
++
++    // Returning to a tab raises focus, visibility, pageshow, and online in separate frames, so the
++    // frame coalescer cannot join them; the quiet period is what keeps that burst to one batch.
++    windowTarget.dispatchEvent(new Event("focus"));
++    frames.runNext();
++    await vi.advanceTimersByTimeAsync(RESUME_QUIET_PERIOD_MS - 100);
++    expect(refreshAfterResume).not.toHaveBeenCalled();
++
++    windowTarget.dispatchEvent(new Event("online"));
++    frames.runNext();
++    await vi.advanceTimersByTimeAsync(RESUME_QUIET_PERIOD_MS - 100);
++    expect(refreshAfterResume).not.toHaveBeenCalled();
++
++    await vi.advanceTimersByTimeAsync(200);
++    expect(refreshAfterResume).toHaveBeenCalledOnce();
++    controller.disconnect();
++  });
++
+   it.each(["focus", "pageshow", "online", "visibilitychange"])("ignores %s while the document is hidden", (type) => {
+     const windowTarget = new EventTarget();
+     const documentTarget = new EventTarget();
+@@ -187,22 +229,16 @@ describe("BrowserResumeController", () => {
+     const frames = frameHarness();
+     const firstGate = deferred<undefined>();
+     const secondGate = deferred<undefined>();
+-    const firstStarted = deferred<undefined>();
+-    const secondStarted = deferred<undefined>();
+-    const secondCompleted = deferred<undefined>();
+     let refreshCalls = 0;
+     const controller = new BrowserResumeController({
+       onResumeSignal: () => undefined,
+       refreshAfterResume: async () => {
+         refreshCalls += 1;
+         if (refreshCalls === 1) {
+-          firstStarted.resolve(undefined);
+           await firstGate.promise;
+           return;
+         }
+-        secondStarted.resolve(undefined);
+         await secondGate.promise;
+-        secondCompleted.resolve(undefined);
+       },
+       onRefreshError: (error) => { throw error; },
+     }, {
+@@ -215,7 +251,7 @@ describe("BrowserResumeController", () => {
+ 
+     windowTarget.dispatchEvent(new Event("pageshow"));
+     frames.runNext();
+-    await firstStarted.promise;
++    await vi.advanceTimersByTimeAsync(RESUME_QUIET_PERIOD_MS);
+ 
+     documentTarget.dispatchEvent(new Event("visibilitychange"));
+     windowTarget.dispatchEvent(new Event("focus"));
+@@ -226,11 +262,11 @@ describe("BrowserResumeController", () => {
+     expect(refreshCalls).toBe(1);
+ 
+     firstGate.resolve(undefined);
+-    await secondStarted.promise;
++    await vi.advanceTimersByTimeAsync(RESUME_QUIET_PERIOD_MS);
+     expect(refreshCalls).toBe(2);
+ 
+     secondGate.resolve(undefined);
+-    await secondCompleted.promise;
++    await vi.advanceTimersByTimeAsync(0);
+     controller.disconnect();
+   });
+ });
+diff --git a/src/client/src/appShell/browserResumeController.ts b/src/client/src/appShell/browserResumeController.ts
+index e4d81507..e5b4f3fb 100644
+--- a/src/client/src/appShell/browserResumeController.ts
++++ b/src/client/src/appShell/browserResumeController.ts
+@@ -22,13 +22,18 @@ export interface BrowserResumeControllerOptions {
+   scheduleFrame?: ((callback: () => void) => ScheduledFrame) | undefined;
+ }
+ 
++/** Resume events arrive in bursts: returning to a tab can raise focus, pageshow, and visibilitychange together. */
++const RESUME_REFRESH_DEBOUNCE_MS = 1_000;
++
+ /** Owns browser resume listeners and batches refreshes per frame. */
+ export class BrowserResumeController {
+   private readonly windowTarget: BrowserEventTarget | undefined;
+   private readonly documentTarget: BrowserEventTarget | undefined;
+   private readonly isDocumentVisible: () => boolean;
+   private readonly scheduleFrame: (callback: () => void) => ScheduledFrame;
+-  private readonly refreshes = new TrailingRefreshCoordinator<"browser-resume">();
++  // One animation frame only separates the events of a burst, so the coordinator's quiet period is what
++  // keeps a second batch from starting the moment the first one settles.
++  private readonly refreshes = new TrailingRefreshCoordinator<"browser-resume">(RESUME_REFRESH_DEBOUNCE_MS);
+   private scheduledRefresh: ScheduledFrame | undefined;
+   private connected = false;
+   private renewSubscription = false;
+diff --git a/src/client/src/components/PiWebApp.ts b/src/client/src/components/PiWebApp.ts
+index ca9dcee5..d606f273 100644
+--- a/src/client/src/components/PiWebApp.ts
++++ b/src/client/src/components/PiWebApp.ts
+@@ -130,6 +130,9 @@ import { appStyles } from "./shared";
+ 
+ 
+ const PI_WEB_STATUS_REFRESH_MS = 15 * 60 * 1000;
++// A resume batch is background reconciliation, so a few sequential rounds are cheaper than the
++// connection burst an unbounded batch opens when the resuming browser has no pooled connections.
++const RESUME_REFRESH_CONCURRENCY = 3;
+ const SELECTED_SESSION_REFRESH_MS = 30_000;
+ const PI_WEB_STATUS_DEFER_MS = 750;
+ const REMOTE_ROUTE_RESTORE_RETRY_DELAYS_MS = [1_000, 3_000, 8_000, 15_000, 30_000] as const;
+@@ -912,16 +915,19 @@ export class PiWebApp extends LitElement {
+       this.realtime.reconnect();
+       for (const socket of this.machineRealtimeSockets.values()) socket.reconnect();
+     }
++    const navigationOrderScopes = this.navigationOrderScopes();
++    // A resuming browser has an empty connection pool, so each of these would otherwise open its own
++    // connection at the same instant. Interaction-critical reads are listed first and start first.
+     await completeRefreshBatch([
+-      this.sessionUnread.refreshAll(),
+-      this.sessions.resumeSelectedSession({ reconnect: renewSubscription }),
+-      this.sessions.refreshCurrentWorkspaceSessions(selectedMachineId(this.state), { recoverNetwork: true }),
+-      this.refreshMachineStatusSnapshots(),
+-      this.refreshWorkspaceDeletionRuns(),
+-      this.refreshCurrentWorkspaceSurface(),
+-      this.workspaces.refreshSelectedProjectTopology(),
+-      ...this.navigationOrderScopes().map((scope) => this.navigationOrder.load(scope)),
+-    ]);
++      () => this.sessions.resumeSelectedSession({ reconnect: renewSubscription }),
++      () => this.sessions.refreshCurrentWorkspaceSessions(selectedMachineId(this.state), { recoverNetwork: true }),
++      () => this.sessionUnread.refreshAll(),
++      () => this.refreshMachineStatusSnapshots(),
++      () => this.refreshWorkspaceDeletionRuns(),
++      () => this.refreshCurrentWorkspaceSurface(),
++      () => this.workspaces.refreshSelectedProjectTopology(),
++      ...navigationOrderScopes.map((scope) => () => this.navigationOrder.load(scope)),
++    ], { concurrency: RESUME_REFRESH_CONCURRENCY });
+   }
+ 
+   /** One slow reconciliation loop; live events remain the normal update path. */
+@@ -1058,12 +1064,12 @@ export class PiWebApp extends LitElement {
+     this.isRefreshingApp = true;
+     try {
+       await completeRefreshBatch([
+-        this.sessions.refreshSelectedSession(),
+-        this.refreshMachineStatusSnapshots(),
+-        this.loadClientConfig(),
+-        this.refreshWorkspaceDeletionRuns(),
+-        this.refreshCurrentWorkspaceSurface(),
+-        this.workspaces.refreshSelectedProjectTopology(),
++        () => this.sessions.refreshSelectedSession(),
++        () => this.refreshMachineStatusSnapshots(),
++        () => this.loadClientConfig(),
++        () => this.refreshWorkspaceDeletionRuns(),
++        () => this.refreshCurrentWorkspaceSurface(),
++        () => this.workspaces.refreshSelectedProjectTopology(),
+       ]);
+       this.schedulePiWebStatusRefresh();
+     } finally {
+diff --git a/src/client/src/controllers/networkReadRecovery.test.ts b/src/client/src/controllers/networkReadRecovery.test.ts
+index f75f4295..b955d451 100644
+--- a/src/client/src/controllers/networkReadRecovery.test.ts
++++ b/src/client/src/controllers/networkReadRecovery.test.ts
+@@ -32,39 +32,51 @@ describe("readWithNetworkRecovery", () => {
+     expect(vi.getTimerCount()).toBe(0);
+   });
+ 
+-  it("allows only three retries at 500, 1500, and 3000ms and throws the final failure", async () => {
++  it("retries once at a jittered delay and throws the final failure", async () => {
+     const finalFailure = new NetworkRequestError("Still offline", { cause: new TypeError("Offline") });
+     const read = vi.fn<() => Promise<string>>()
+       .mockRejectedValueOnce(new NetworkRequestError("First failure"))
+-      .mockRejectedValueOnce(new NetworkRequestError("Second failure"))
+-      .mockRejectedValueOnce(new NetworkRequestError("Third failure"))
+       .mockRejectedValue(finalFailure);
+-    const outcome = expect(readWithNetworkRecovery(read, () => true)).rejects.toBe(finalFailure);
++    const outcome = expect(readWithNetworkRecovery(read, () => true, { random: () => 0.5 })).rejects.toBe(finalFailure);
+ 
+     expect(read).toHaveBeenCalledOnce();
+-    await vi.advanceTimersByTimeAsync(0);
+-    for (const [index, delay] of [500, 1500, 3000].entries()) {
+-      await vi.advanceTimersByTimeAsync(delay - 1);
+-      expect(read).toHaveBeenCalledTimes(index + 1);
+-      await vi.advanceTimersByTimeAsync(1);
+-      expect(read).toHaveBeenCalledTimes(index + 2);
+-    }
++    await vi.advanceTimersByTimeAsync(649);
++    expect(read).toHaveBeenCalledOnce();
++    await vi.advanceTimersByTimeAsync(1);
++    expect(read).toHaveBeenCalledTimes(2);
+ 
+     await outcome;
+     expect(vi.getTimerCount()).toBe(0);
+   });
+ 
+-  it.each([1, 2, 3])("returns success after %i network retries", async (retryCount) => {
+-    const read = vi.fn<() => Promise<string>>().mockResolvedValue("recovered");
+-    for (let index = 0; index < retryCount; index += 1) {
+-      read.mockRejectedValueOnce(new NetworkRequestError("Offline"));
+-    }
++  it.each([
++    { random: 0, delay: 500 },
++    { random: 0.5, delay: 650 },
++    { random: 0.99, delay: 797 },
++  ])("jitters the retry to $delay ms for a random value of $random", async ({ random, delay }) => {
++    const read = vi.fn<() => Promise<string>>()
++      .mockRejectedValueOnce(new NetworkRequestError("Offline"))
++      .mockResolvedValue("recovered");
++
++    const outcome = expect(readWithNetworkRecovery(read, () => true, { random: () => random })).resolves.toBe("recovered");
++    await vi.advanceTimersByTimeAsync(delay - 1);
++    expect(read).toHaveBeenCalledOnce();
++    await vi.advanceTimersByTimeAsync(1);
++
++    await outcome;
++    expect(read).toHaveBeenCalledTimes(2);
++  });
++
++  it("returns success after one network retry", async () => {
++    const read = vi.fn<() => Promise<string>>()
++      .mockRejectedValueOnce(new NetworkRequestError("Offline"))
++      .mockResolvedValue("recovered");
+     const outcome = expect(readWithNetworkRecovery(read, () => true)).resolves.toBe("recovered");
+ 
+     await vi.runAllTimersAsync();
+ 
+     await outcome;
+-    expect(read).toHaveBeenCalledTimes(retryCount + 1);
++    expect(read).toHaveBeenCalledTimes(2);
+     expect(vi.getTimerCount()).toBe(0);
+   });
+ 
+@@ -134,35 +146,30 @@ describe("readWithNetworkRecovery", () => {
+     expect(vi.getTimerCount()).toBe(0);
+   });
+ 
+-  it.each([0, 1, 2])("does not read again when retired during retry delay %i", async (retryIndex) => {
++  it("does not read again when retired during the retry delay", async () => {
+     let current = true;
+     const read = vi.fn<() => Promise<string>>().mockRejectedValue(new NetworkRequestError("Offline"));
+     const outcome = expect(readWithNetworkRecovery(read, () => current)).resolves.toBeUndefined();
+     await vi.advanceTimersByTimeAsync(0);
+-    for (const delay of [500, 1500, 3000].slice(0, retryIndex)) {
+-      await vi.advanceTimersByTimeAsync(delay);
+-    }
+-    expect(read).toHaveBeenCalledTimes(retryIndex + 1);
++    expect(read).toHaveBeenCalledOnce();
+     current = false;
+ 
+     await vi.runAllTimersAsync();
+ 
+     await outcome;
+-    expect(read).toHaveBeenCalledTimes(retryIndex + 1);
++    expect(read).toHaveBeenCalledOnce();
+     expect(vi.getTimerCount()).toBe(0);
+   });
+ 
+-  it("discards the final network failure when retired during the last attempt", async () => {
++  it("discards the final network failure when retired during the retry", async () => {
+     let current = true;
+     const pending = deferred<string>();
+     const read = vi.fn<() => Promise<string>>()
+       .mockRejectedValueOnce(new NetworkRequestError("First failure"))
+-      .mockRejectedValueOnce(new NetworkRequestError("Second failure"))
+-      .mockRejectedValueOnce(new NetworkRequestError("Third failure"))
+       .mockReturnValueOnce(pending.promise);
+     const outcome = expect(readWithNetworkRecovery(read, () => current)).resolves.toBeUndefined();
+     await vi.runAllTimersAsync();
+-    expect(read).toHaveBeenCalledTimes(4);
++    expect(read).toHaveBeenCalledTimes(2);
+     current = false;
+ 
+     pending.reject(new NetworkRequestError("Final failure"));
+diff --git a/src/client/src/controllers/networkReadRecovery.ts b/src/client/src/controllers/networkReadRecovery.ts
+index c703f9c3..f6248f65 100644
+--- a/src/client/src/controllers/networkReadRecovery.ts
++++ b/src/client/src/controllers/networkReadRecovery.ts
+@@ -1,9 +1,31 @@
+ import { NetworkRequestError } from "../api/http";
+ 
+-const RETRY_DELAYS_MS = [500, 1500, 3000];
++/**
++ * One retry only. Reads usually fail together, and a longer retry ladder keeps opening connections
++ * while the browser is still recovering its own network state.
++ */
++const RETRY_ATTEMPTS = 1;
++const RETRY_BASE_DELAY_MS = 500;
++const RETRY_JITTER_MS = 300;
+ 
+-/** Opt-in recovery for reads only; retired contexts discard both results and failures. */
+-export async function readWithNetworkRecovery<T>(read: () => Promise<T>, isCurrent: () => boolean): Promise<T | undefined> {
++/** Upper bound on a retry delay; a retry never waits longer. Timing tests use it to advance far enough. */
++export const NETWORK_RETRY_MAX_DELAY_MS = RETRY_BASE_DELAY_MS + RETRY_JITTER_MS;
++
++export interface NetworkRecoveryDependencies {
++  /** Injectable for deterministic delay expectations. */
++  random?: () => number;
++}
++
++/**
++ * Opt-in recovery for reads only; retired contexts discard both results and failures.
++ * The jittered delay spreads the retries of refreshes that failed together instead of retrying them in lockstep.
++ */
++export async function readWithNetworkRecovery<T>(
++  read: () => Promise<T>,
++  isCurrent: () => boolean,
++  deps: NetworkRecoveryDependencies = {},
++): Promise<T | undefined> {
++  const random = deps.random ?? Math.random;
+   if (!isCurrent()) return undefined;
+   let retries = 0;
+   for (;;) {
+@@ -12,9 +34,8 @@ export async function readWithNetworkRecovery<T>(read: () => Promise<T>, isCurre
+       result = await read();
+     } catch (error) {
+       if (!isCurrent()) return undefined;
+-      const delay = RETRY_DELAYS_MS[retries];
+-      if (!(error instanceof NetworkRequestError) || delay === undefined) throw error;
+-      await new Promise<void>((resolve) => { setTimeout(resolve, delay); });
++      if (!(error instanceof NetworkRequestError) || retries >= RETRY_ATTEMPTS) throw error;
++      await new Promise<void>((resolve) => { setTimeout(resolve, retryDelayMs(random)); });
+       if (!isCurrent()) return undefined;
+       retries += 1;
+       continue;
+@@ -22,3 +43,7 @@ export async function readWithNetworkRecovery<T>(read: () => Promise<T>, isCurre
+     return isCurrent() ? result : undefined;
+   }
+ }
++
++function retryDelayMs(random: () => number): number {
++  return RETRY_BASE_DELAY_MS + Math.floor(random() * RETRY_JITTER_MS);
++}
+diff --git a/src/client/src/controllers/refreshBatch.test.ts b/src/client/src/controllers/refreshBatch.test.ts
+index 290fd90c..1fb44be2 100644
+--- a/src/client/src/controllers/refreshBatch.test.ts
++++ b/src/client/src/controllers/refreshBatch.test.ts
+@@ -1,18 +1,31 @@
+ import { describe, expect, it } from "vitest";
+ import { completeRefreshBatch } from "./refreshBatch";
+ 
++function failing(error: Error): () => Promise<never> {
++  return () => Promise.reject(error);
++}
++
++function recording(completed: string[], label: string): () => Promise<void> {
++  return () => {
++    completed.push(label);
++    return Promise.resolve();
++  };
++}
++
+ describe("refresh batch completion", () => {
+   it("does not report a batch finished while sibling refreshes are still running after a failure", async () => {
+     const failure = new Error("Topology unavailable");
+-    let finish: () => void = () => undefined;
+-    const pending = new Promise<void>((resolve) => { finish = resolve; });
++    let release: () => void = () => undefined;
+     let settled = false;
+-    const batch = completeRefreshBatch([Promise.reject(failure), pending]).finally(() => { settled = true; });
++    const batch = completeRefreshBatch([
++      failing(failure),
++      () => new Promise<void>((resolve) => { release = resolve; }),
++    ]).finally(() => { settled = true; });
+     const checked = expect(batch).rejects.toBe(failure);
+     await Promise.resolve();
+     await Promise.resolve();
+     expect(settled).toBe(false);
+-    finish();
++    release();
+     await checked;
+     expect(settled).toBe(true);
+   });
+@@ -20,12 +33,74 @@ describe("refresh batch completion", () => {
+   it("retains every independent failure instead of reporting whichever happened first", async () => {
+     const first = new Error("Topology unavailable");
+     const second = new Error("Panel unavailable");
+-    await expect(completeRefreshBatch([Promise.reject(first), Promise.resolve(), Promise.reject(second)]))
++    await expect(completeRefreshBatch([failing(first), () => Promise.resolve(), failing(second)]))
+       .rejects.toMatchObject({ errors: [first, second], message: "Topology unavailable; Panel unavailable" });
+   });
+ 
++  it("reports failures in list order regardless of which settled first", async () => {
++    const slow = new Error("Slow read failed");
++    const fast = new Error("Fast read failed");
++    await expect(completeRefreshBatch([
++      () => new Promise<never>((_resolve, reject) => { setTimeout(() => { reject(slow); }, 20); }),
++      failing(fast),
++    ])).rejects.toMatchObject({ errors: [slow, fast] });
++  });
++
++  it("starts only as many refreshes as the concurrency limit allows", async () => {
++    let running = 0;
++    let peak = 0;
++    const started: number[] = [];
++    const task = (index: number): (() => Promise<void>) => async () => {
++      started.push(index);
++      running += 1;
++      peak = Math.max(peak, running);
++      await new Promise<void>((resolve) => { setTimeout(resolve, 5); });
++      running -= 1;
++    };
++
++    const batch = completeRefreshBatch([task(0), task(1), task(2), task(3), task(4)], { concurrency: 2 });
++    expect(started).toEqual([0, 1]);
++
++    await batch;
++    expect(started).toEqual([0, 1, 2, 3, 4]);
++    expect(peak).toBe(2);
++  });
++
++  it("runs the whole queue when the limit is below the batch size", async () => {
++    let started = 0;
++    const run = (): Promise<never> => {
++      started += 1;
++      return Promise.reject(new Error(`read ${String(started)} failed`));
++    };
++
++    await expect(completeRefreshBatch([run, run, run, run], { concurrency: 1 }))
++      .rejects.toThrow("read 1 failed; read 2 failed; read 3 failed; read 4 failed");
++    expect(started).toBe(4);
++  });
++
++  it("still runs later refreshes when an earlier one fails under a limit", async () => {
++    const failure = new Error("Machine status unavailable");
++    const other = new Error("Unread unavailable");
++    const completed: string[] = [];
++
++    await expect(completeRefreshBatch([
++      failing(failure),
++      recording(completed, "topology"),
++      failing(other),
++      recording(completed, "sessions"),
++    ], { concurrency: 1 })).rejects.toMatchObject({ errors: [failure, other] });
++
++    expect(completed).toEqual(["topology", "sessions"]);
++  });
++
++  it("rejects a concurrency limit that cannot run a batch", async () => {
++    await expect(completeRefreshBatch([() => Promise.resolve()], { concurrency: 0 })).rejects.toThrow("concurrency must be a positive integer");
++    await expect(completeRefreshBatch([() => Promise.resolve()], { concurrency: 1.5 })).rejects.toThrow("concurrency must be a positive integer");
++  });
++
+   it("completes successful and empty batches", async () => {
+-    await expect(completeRefreshBatch([Promise.resolve("list"), Promise.resolve("panel")])).resolves.toBeUndefined();
++    await expect(completeRefreshBatch([() => Promise.resolve("list"), () => Promise.resolve("panel")])).resolves.toBeUndefined();
+     await expect(completeRefreshBatch([])).resolves.toBeUndefined();
++    await expect(completeRefreshBatch([], { concurrency: 3 })).resolves.toBeUndefined();
+   });
+ });
+diff --git a/src/client/src/controllers/refreshBatch.ts b/src/client/src/controllers/refreshBatch.ts
+index 606c7c6a..afa69a46 100644
+--- a/src/client/src/controllers/refreshBatch.ts
++++ b/src/client/src/controllers/refreshBatch.ts
+@@ -1,10 +1,41 @@
+-/** Independent refreshes apply their own results; the batch finishes only when all have settled. */
+-export async function completeRefreshBatch(refreshes: readonly Promise<unknown>[]): Promise<void> {
+-  const results = await Promise.allSettled(refreshes);
+-  const errors: unknown[] = [];
+-  for (const result of results) {
+-    if (result.status === "rejected") errors.push(result.reason);
++/** One refresh operation. A refresh re-reads and re-applies state, so starting one later never loses information. */
++export type RefreshBatchTask = () => unknown;
++
++export interface RefreshBatchOptions {
++  /** Maximum refreshes in flight at once. Every refresh starts at once when omitted. */
++  concurrency?: number;
++}
++
++/**
++ * Independent refreshes apply their own results; the batch finishes only when all have settled.
++ * A concurrency limit is for a browser whose connection pool is empty: every refresh started at the
++ * same instant opens its own connection, so an unbounded batch turns one reconciliation into a burst.
++ */
++export async function completeRefreshBatch(
++  refreshes: readonly RefreshBatchTask[],
++  options: RefreshBatchOptions = {},
++): Promise<void> {
++  if (options.concurrency !== undefined && (!Number.isInteger(options.concurrency) || options.concurrency < 1)) {
++    throw new Error("concurrency must be a positive integer");
+   }
++  const failures = new Map<number, unknown>();
++  let nextIndex = 0;
++  const runQueue = async (): Promise<void> => {
++    while (nextIndex < refreshes.length) {
++      const index = nextIndex;
++      nextIndex += 1;
++      try {
++        await refreshes[index]?.();
++      } catch (error) {
++        // Refreshes stay independent, so one failure never cancels the rest of the batch.
++        failures.set(index, error);
++      }
++    }
++  };
++  // Workers are started in list order, so the caller decides which refreshes go first.
++  await Promise.all(Array.from({ length: Math.min(options.concurrency ?? refreshes.length, refreshes.length) }, () => runQueue()));
++  // Reported in list order rather than completion order, so the aggregate does not depend on timing.
++  const errors = [...failures.entries()].sort(([left], [right]) => left - right).map(([, error]) => error);
+   if (errors.length === 1) throw errors[0];
+   if (errors.length > 1) {
+     throw new AggregateError(errors, errors.map((error) => error instanceof Error ? error.message : String(error)).join("; "));
+diff --git a/src/client/src/controllers/sessionController.networkRecovery.test.ts b/src/client/src/controllers/sessionController.networkRecovery.test.ts
+index b4f659f0..b627c1ef 100644
+--- a/src/client/src/controllers/sessionController.networkRecovery.test.ts
++++ b/src/client/src/controllers/sessionController.networkRecovery.test.ts
+@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { NetworkRequestError, HttpRequestError } from "../api/http";
+ import { initialAppState } from "../appState";
+ import { BrowserErrorReporter, sessionBrowserErrorScope, workspaceBrowserErrorScope } from "../browserErrors";
++import { NETWORK_RETRY_MAX_DELAY_MS } from "./networkReadRecovery";
+ import { SessionController } from "./sessionController";
+ import { defaultApi, deferred, EmitSocket, emptyPage, FakeSocket, oldSession, replacementSession, status, transcriptSnapshotFixture, workspace, type AppState, type SessionInfo } from "./sessionController.testSupport";
+ 
+@@ -35,7 +36,7 @@ describe("silent session read recovery", () => {
+     h.snapshot.mockRejectedValueOnce(networkFailure());
+     const resume = h.controller.resumeSelectedSession();
+     expect(reconnect).toHaveBeenCalledOnce();
+-    await vi.advanceTimersByTimeAsync(500);
++    await vi.advanceTimersByTimeAsync(NETWORK_RETRY_MAX_DELAY_MS);
+     await resume;
+     expect(h.snapshot).toHaveBeenCalledTimes(2);
+     expect(h.getState().browserErrors).toEqual({});
+@@ -53,7 +54,7 @@ describe("silent session read recovery", () => {
+     expect(h.getState().messages).toBe(messages);
+     expect(h.getState().selectedSession).toBe(oldSession);
+ 
+-    await vi.advanceTimersByTimeAsync(500);
++    await vi.advanceTimersByTimeAsync(NETWORK_RETRY_MAX_DELAY_MS);
+     await refresh;
+     expect(h.snapshot).toHaveBeenCalledTimes(2);
+     expect(h.getState().browserErrors).toEqual({});
+@@ -63,12 +64,12 @@ describe("silent session read recovery", () => {
+     const h = setup();
+     h.snapshot.mockRejectedValue(networkFailure());
+     const refresh = h.controller.refreshSelectedSession(undefined, { recoverNetwork: true });
+-    await vi.advanceTimersByTimeAsync(2000);
++    await vi.advanceTimersByTimeAsync(0);
+     expect(h.getState().browserErrors).toEqual({});
+-    await vi.advanceTimersByTimeAsync(3000);
++    await vi.advanceTimersByTimeAsync(NETWORK_RETRY_MAX_DELAY_MS);
+     await refresh;
+ 
+-    expect(h.snapshot).toHaveBeenCalledTimes(4);
++    expect(h.snapshot).toHaveBeenCalledTimes(2);
+     expect(Object.values(h.getState().browserErrors)).toMatchObject([{
+       scope: sessionScope,
+       message: "The conversation could not be refreshed. Check your connection and retry.",
+@@ -144,7 +145,7 @@ describe("silent session read recovery", () => {
+     socket.reconnect();
+     await vi.advanceTimersByTimeAsync(0);
+     expect(h.getState().browserErrors).toEqual({});
+-    await vi.advanceTimersByTimeAsync(500);
++    await vi.advanceTimersByTimeAsync(NETWORK_RETRY_MAX_DELAY_MS);
+     expect(h.snapshot).toHaveBeenCalledTimes(3);
+     expect(h.getState().browserErrors).toEqual({});
+     controller.dispose();
+@@ -159,7 +160,7 @@ describe("workspace session-list recovery", () => {
+     await vi.advanceTimersByTimeAsync(0);
+     expect(h.getState().browserErrors).toEqual({});
+     expect(h.getState().selectedSession).toBe(oldSession);
+-    await vi.advanceTimersByTimeAsync(500);
++    await vi.advanceTimersByTimeAsync(NETWORK_RETRY_MAX_DELAY_MS);
+     await refresh;
+     expect(h.sessions).toHaveBeenCalledTimes(2);
+     expect(h.getState().browserErrors).toEqual({});
+@@ -208,7 +209,7 @@ describe("workspace session-list recovery", () => {
+     if (action === "select") await h.controller.selectSession(replacementSession, { updateUrl: false });
+     else h.controller.deselectSession({ updateUrl: false });
+ 
+-    await vi.advanceTimersByTimeAsync(500);
++    await vi.advanceTimersByTimeAsync(NETWORK_RETRY_MAX_DELAY_MS);
+     await refresh;
+ 
+     expect(h.sessions).toHaveBeenCalledTimes(2);
+diff --git a/src/client/src/controllers/sessionController.readCancellation.test.ts b/src/client/src/controllers/sessionController.readCancellation.test.ts
+index b91b3e23..c642477a 100644
+--- a/src/client/src/controllers/sessionController.readCancellation.test.ts
++++ b/src/client/src/controllers/sessionController.readCancellation.test.ts
+@@ -1,6 +1,7 @@
+ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+ import { sessionsApi } from "../api/clients";
+ import { initialAppState } from "../appState";
++import { NETWORK_RETRY_MAX_DELAY_MS } from "./networkReadRecovery";
+ import { SessionController } from "./sessionController";
+ import { defaultApi, EmitSocket, emptyPage, oldSession, replacementSession, status, workspace, type AppState } from "./sessionController.testSupport";
+ 
+@@ -26,13 +27,13 @@ describe("selected-session read deadlines", () => {
+     const refresh = h.controller.refreshSelectedSession(undefined, { recoverNetwork: true });
+     await vi.advanceTimersByTimeAsync(45_000);
+     await refresh;
+-    expect(h.fetchMock).toHaveBeenCalledTimes(4);
++    expect(h.fetchMock).toHaveBeenCalledTimes(2);
+     for (const [, init] of h.fetchMock.mock.calls) expect(init?.signal?.aborted).toBe(true);
+     expect(Object.values(h.getState().browserErrors)).toMatchObject([{ recovery: "session-refresh" }]);
+ 
+     h.fetchMock.mockResolvedValue(new Response(JSON.stringify({ page: emptyPage, status: status(oldSession.id), seq: 0, partial: null })));
+     await h.controller.refreshSelectedSession();
+-    expect(h.fetchMock).toHaveBeenCalledTimes(5);
++    expect(h.fetchMock).toHaveBeenCalledTimes(3);
+     expect(h.getState().browserErrors).toEqual({});
+     h.controller.dispose();
+     expect(vi.getTimerCount()).toBe(0);
+@@ -68,7 +69,7 @@ describe("selected-session read deadlines", () => {
+     expect(h.getState().messages).toMatchObject([{ parts: [{ type: "text", text: "live output" }] }]);
+     expect(h.fetchMock).toHaveBeenCalledTimes(2);
+     h.controller.dispose();
+-    await vi.advanceTimersByTimeAsync(500);
++    await vi.advanceTimersByTimeAsync(NETWORK_RETRY_MAX_DELAY_MS);
+     await refresh;
+     expect(h.fetchMock).toHaveBeenCalledTimes(2);
+   });
+diff --git a/src/client/src/controllers/sessionController.transcriptRace.test.ts b/src/client/src/controllers/sessionController.transcriptRace.test.ts
+index df062b24..ba44e501 100644
+--- a/src/client/src/controllers/sessionController.transcriptRace.test.ts
++++ b/src/client/src/controllers/sessionController.transcriptRace.test.ts
+@@ -3,6 +3,7 @@ import { initialAppState } from "../appState";
+ import { NetworkRequestError } from "../api/http";
+ import type { PendingExtensionDialog, SessionTranscriptSnapshot } from "../api";
+ import type { SessionUiEvent } from "../sessionSocket";
++import { NETWORK_RETRY_MAX_DELAY_MS } from "./networkReadRecovery";
+ import { SessionController } from "./sessionController";
+ import { defaultApi, deferred, EmitSocket, oldSession, replacementSession, runPendingAnimationFrames, status, workspace, type AppState } from "./sessionController.testSupport";
+ 
+@@ -141,7 +142,7 @@ describe("SessionController snapshot reconciliation", () => {
+       expect(h.state().pendingDialogs).toEqual([dialog]);
+       expect(h.state().browserErrors).toEqual({});
+ 
+-      await vi.advanceTimersByTimeAsync(500);
++      await vi.advanceTimersByTimeAsync(NETWORK_RETRY_MAX_DELAY_MS);
+       await Promise.all([refresh, coalesced]);
+       runPendingAnimationFrames();
+       expect(h.state().messages).toEqual(twoTurns);

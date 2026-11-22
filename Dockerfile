@@ -1,3 +1,37 @@
+# -- pi-web (rebuilt from upstream source with local patch) --------------------
+# patches/pi-web-request-storm.patch is a source-level patch: it changes
+# TypeScript under src/client and pi-web-plugins, and the published tarball
+# ships only the compiled dist. Shipping the fix therefore means rebuilding
+# pi-web from the source of the exact version pinned in package.json.
+# The produced dist is a drop-in replacement for the published one: same file
+# set, with the patched client chunks as the only difference (verified below in
+# the main stage). Bumping @jmfederico/pi-web in package.json is enough to
+# rebuild this stage; the patch must still apply to the new tag.
+FROM node:24-slim AS pi-web-build
+# git to fetch the tag, build-essential/python3 for the native install script of
+# node-pty (an optional dependency npm would otherwise skip silently).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git \
+        ca-certificates \
+        build-essential \
+        python3 \
+    && rm -rf /var/lib/apt/lists/*
+# The version pin in this repository's package.json is the single source of
+# truth for which upstream tag gets built, so the two cannot drift apart.
+COPY package.json /tmp/work-package.json
+RUN PI_WEB_VERSION="$(node -p "require('/tmp/work-package.json').dependencies['@jmfederico/pi-web']")" \
+ && case "${PI_WEB_VERSION}" in \
+      [0-9]*) ;; \
+      *) echo "the @jmfederico/pi-web pin must be an exact version, got ${PI_WEB_VERSION}" >&2; exit 1 ;; \
+    esac \
+ && echo "building pi-web v${PI_WEB_VERSION} from source" \
+ && git clone --depth 1 --single-branch --branch "v${PI_WEB_VERSION}" https://github.com/jmfederico/pi-web.git /build \
+ && rm -rf /build/.git
+WORKDIR /build
+COPY patches/pi-web-request-storm.patch /build/patches/
+RUN git apply --verbose patches/pi-web-request-storm.patch
+RUN --mount=type=cache,target=/root/.npm npm ci --no-audit --no-fund 2>&1 && npm run build 2>&1
+
 # -- base ---------------------------------------------------------------------
 FROM node:24-slim
 
@@ -112,6 +146,22 @@ COPY package.json /app/package.json
 # The package's own imports resolve fine against 1.0.4; only its peer range is
 # behind, so the conflict is metadata, not a real incompatibility.
 RUN npm install --omit=dev --legacy-peer-deps 2>&1
+# Swap the published pi-web build for the patched one built in the first stage.
+# Only dist is replaced: package.json and the package's installed dependencies
+# stay the published ones, which is the same version the patched dist was
+# compiled from. This must happen before the plugin build below, which writes
+# into dist/pi-web-plugins.
+COPY --from=pi-web-build /build/dist /app/node_modules/@jmfederico/pi-web/dist
+# Fail the build rather than ship a half-applied swap: the replaced dist must
+# belong to the pinned version, and it must actually carry the patch (this
+# string only exists in the patched refresh-batch code).
+RUN INSTALLED_PI_WEB_VERSION="$(jq -r .version /app/node_modules/@jmfederico/pi-web/package.json)" \
+ && PINNED_PI_WEB_VERSION="$(jq -r '.dependencies["@jmfederico/pi-web"]' /app/package.json)" \
+ && test "${INSTALLED_PI_WEB_VERSION}" = "${PINNED_PI_WEB_VERSION}" \
+    || { echo "pi-web version mismatch: installed ${INSTALLED_PI_WEB_VERSION}, pinned ${PINNED_PI_WEB_VERSION}"; exit 1; } \
+ && grep -rq "concurrency must be a positive integer" /app/node_modules/@jmfederico/pi-web/dist/client \
+    || { echo "pi-web dist does not contain the request-storm patch"; exit 1; } \
+ && echo "pi-web ${INSTALLED_PI_WEB_VERSION} dist replaced with patched build"
 # pi-web ships the relays Pi package inside its tarball and its session daemon
 # auto-installs it into the agent profile at startup (relays = remote/mobile
 # relay sessions). This deployment does not use relays: remove the shipped

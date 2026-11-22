@@ -21,6 +21,7 @@ work/
 |   |-- scheduled/     Scheduler state and run history
 |   \-- web/           Pi Web state
 |-- config/            Runtime and service configuration
+|-- patches/           Upstream source patches applied at image build
 |-- scripts/           Container and scheduler scripts
 |-- extensions/        Pi agent extensions
 |-- skills/            Pi agent skills
@@ -172,9 +173,17 @@ This image uses `pi-sandbox` (carderne/pi-sandbox, config at `~/.pi/agent/sandbo
 
 - `npm install` needs `--legacy-peer-deps` (both installs in the Dockerfile): pi-sandbox publishes `peerOptional @earendil-works/pi-coding-agent@^0.80.0`, which conflicts with the 1.x agent this image pins. The conflict is stale published metadata -- the package's imports resolve fine against 1.x -- so keep the flag until upstream widens the range rather than downgrading the agent.
 
-### Never patch node modules
+### Patch upstream code by rebuilding, never by mutating node_modules
 
-There is no `patches/` directory and there must not be one. The former `pi-sandbox-weaker-nested.patch` existed only because the package then in use exposed no knob for nested-container procfs; the package used now exposes `enableWeakerNestedSandbox` in its own config, and the build has no patch step. If a future dependency seems to need a patch, look for the config option first (read its schema, not just its README) and prefer switching packages over patching: a patched `node_modules` tree is invisible to `npm install`, silently diverges from the lockfile, and re-breaks on every version bump.
+Never edit an installed file under `node_modules`, and never add a build step that patches a package after `npm install`: a mutated tree is invisible to `npm install`, silently diverges from the lockfile, and re-breaks on every version bump. Look for a config option first (read the package's schema, not just its README) and prefer switching packages over patching. The former `pi-sandbox-weaker-nested.patch` is gone for this reason: the package used now exposes `enableWeakerNestedSandbox` in its own config, so the sandbox needs no build step.
+
+`patches/` holds patches applied to a clean upstream *source* checkout that is then built from scratch, so the image never runs a mutated install. The entry there now, `pi-web-request-storm.patch`, cuts the request bursts Pi Web's browser client makes when a tab regains focus and slows the terminal badge poll from 1s to 10s; it touches TypeScript under `src/client` and `pi-web-plugins`, and the published tarball ships only compiled output, which is why the fix has to be rebuilt rather than patched in place. The rules it follows, and that any future entry must follow:
+
+- A dedicated build stage clones the upstream tag named by the dependency pin in `package.json` -- `package.json` is the only version pin, the stage reads it, so the built source and the installed package cannot drift -- then applies the patch with `git apply` and runs `npm ci && npm run build`.
+- Only the build output is copied into the installed package (`COPY --from=pi-web-build /build/dist ...`), and it happens before the relays removal and before `build-plugins` writes into `dist/pi-web-plugins`.
+- Patches are git-format unified diffs against the tagged release, applied at `-p1`. Check an upgrade before bumping the pin: `git archive v<version> | tar -x -C <dir> && cd <dir> && git apply --check ../../../patches/<name>.patch` (run from a clone of upstream).
+- The main stage asserts the swap really happened: the installed `package.json` version equals the pin, and the built client contains a string only the patch introduces. If you replace the patch, change that assertion token to a string unique to the new one -- a string that survives minification.
+- After a version bump, confirm the rebuilt `dist` is otherwise the published one: `diff <(cd <extracted tarball>/package && find dist -type f | sort) <(cd <build dir> && find dist -type f | sort)` should differ only in the chunks the patch changes.
 
 ### Adding an allowlisted domain
 
